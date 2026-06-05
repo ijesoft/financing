@@ -5,6 +5,7 @@ from pydantic import BaseModel
 import logging
 import os
 
+from .cors import cors_origins, CORS_ALLOW_METHODS, CORS_ALLOW_HEADERS
 from .database import create_tables
 from .database.postgres import engine
 from .database.redis_client import get_redis, close_redis
@@ -109,10 +110,10 @@ app.add_middleware(AuditMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=cors_origins(),
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=CORS_ALLOW_METHODS,
+    allow_headers=CORS_ALLOW_HEADERS,
 )
 
 
