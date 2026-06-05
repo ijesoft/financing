@@ -30,13 +30,24 @@ def get_engine():
     global _engine
     if _engine is None:
         from ..config import settings
-        _engine = create_async_engine(
-            settings.database_url,
-            echo=False,
-            pool_pre_ping=True,
-            pool_size=10,
-            max_overflow=20,
-        )
+        if settings.banking_grade_mode:
+            _engine = create_async_engine(
+                settings.database_url,
+                echo=False,
+                pool_pre_ping=True,
+                pool_recycle=1800,
+                pool_timeout=10,
+                pool_size=10,
+                max_overflow=20,
+            )
+        else:
+            _engine = create_async_engine(
+                settings.database_url,
+                echo=False,
+                pool_pre_ping=True,
+                pool_size=10,
+                max_overflow=20,
+            )
     return _engine
 
 def get_async_session_local():

@@ -29,5 +29,11 @@ class Settings(BaseSettings):
     # ── File Uploads (KYC docs) ───────────────────────────────────────────────
     UPLOAD_DIR: str = "/tmp/kyc_uploads"
 
+    # ── Banking-grade mode ────────────────────────────────────────────────────
+    # When true, the database engine pool uses conservative banking-grade
+    # settings: pool_recycle=1800, pool_timeout=10, pool_pre_ping=True.
+    # Default off to preserve existing behavior.
+    banking_grade_mode: bool = False
+
 
 settings = Settings()
