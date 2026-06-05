@@ -17,6 +17,7 @@ from sqlalchemy import (
     ForeignKey,
     Index,
     Integer,
+    Numeric,
     String,
     Text,
     UniqueConstraint,
@@ -205,7 +206,7 @@ class AMLAlert(Base):
     reported_by = Column(String(64), nullable=True)
     status = Column(String(20), nullable=False, default="pending_review")  # "pending_review", "investigated", "reported"
     requires_filing = Column(Boolean, default=False, nullable=False)
-    ctr_amount = Column(Float, nullable=True)
+    ctr_amount = Column(Numeric(15, 2), nullable=True)
     resolved_at = Column(DateTime(timezone=True), nullable=True)
     resolution_notes = Column(Text, nullable=True)
     resolved_by = Column(String(64), nullable=True)
@@ -240,7 +241,7 @@ class Collection(Base):
 
     id = Column(BigInteger, primary_key=True, autoincrement=True)
     customer_id = Column(String(64), nullable=False, index=True)
-    amount = Column(Float, nullable=False)
+    amount = Column(Numeric(15, 2), nullable=False)
     status = Column(String(20), nullable=False, default="pending")  # pending, partial, collected, overdue, written_off
     due_date = Column(DateTime(timezone=True), nullable=False)
     collection_date = Column(DateTime(timezone=True), nullable=True)
