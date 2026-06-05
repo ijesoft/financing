@@ -298,6 +298,26 @@ class SavingsMutation:
         
         created_account = await savings_crud.create_savings_account(account_to_create)
         created_account_data = await savings_crud.get_savings_account_by_id(str(created_account.id))
+
+        # Banking-grade: opening deposit must hit the GL.
+        # DR 1010 (Cash in Bank) / CR 2020 (Savings Deposits Payable)
+        if input.balance and float(input.balance) > 0:
+            try:
+                from .accounting import create_journal_entry
+                amount = float(input.balance)
+                await create_journal_entry(
+                    db,
+                    reference_no=f"SA-OPEN-{input.account_number}",
+                    description=f"Opening deposit for savings account {input.account_number}",
+                    lines=[
+                        {"account_code": "1010", "debit": amount, "credit": 0},
+                        {"account_code": "2020", "debit": 0, "credit": amount},
+                    ],
+                    created_by=str(getattr(current_user, "id", None) or ""),
+                )
+            except Exception:
+                pass
+
         account = map_db_account_to_strawberry_type(created_account_data)
 
         return SavingsAccountResponse(success=True, message="Savings account created", account=account)
