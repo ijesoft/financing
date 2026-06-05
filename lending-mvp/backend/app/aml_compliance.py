@@ -28,7 +28,8 @@ logger = logging.getLogger(__name__)
 
 from .models import UserInDB
 from .database.postgres import get_db_session
-from .database.pg_core_models import Customer, Loan
+from .database.pg_core_models import Customer
+from .database.pg_loan_models import LoanApplication as Loan
 from .database.pg_models import KYCDocument, CustomerActivity, AMLAlert
 from .database.pg_accounting_models import GLAccount, JournalEntry, JournalLine
 from .config import settings

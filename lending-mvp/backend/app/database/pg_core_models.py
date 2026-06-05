@@ -124,7 +124,6 @@ class Customer(Base):
     )
     
     savings_accounts = relationship("SavingsAccount", back_populates="customer", cascade="all, delete-orphan")
-    loans = relationship("Loan", back_populates="customer", cascade="all, delete-orphan")
 
 
 # ---------------------------------------------------------------------------
@@ -198,83 +197,6 @@ class SavingsTransaction(Base):
 
 
 # ---------------------------------------------------------------------------
-# Loans - Replaces MongoDB loans collection
-# ---------------------------------------------------------------------------
-class Loan(Base):
-    __tablename__ = "loans"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    
-    loan_number = Column(String(50), nullable=False, unique=True)
-    customer_id = Column(BigInteger, ForeignKey("customers.id"), nullable=False, index=True)
-    customer = relationship("Customer", back_populates="loans")
-    
-    loan_product_id = Column(BigInteger, ForeignKey("loan_products.id"), nullable=False, index=True)
-    
-    amount = Column(Numeric(15, 2), nullable=False)
-    interest_rate = Column(Numeric(5, 2), nullable=False)
-    term_months = Column(Integer, nullable=False)
-    
-    status = Column(String(20), default="pending", nullable=False, index=True)
-    
-    disbursement_date = Column(Date, nullable=True)
-    maturity_date = Column(Date, nullable=True)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-    updated_at = Column(
-        DateTime(timezone=True), 
-        server_default=func.now(), 
-        onupdate=func.now(), 
-        nullable=False
-    )
-    
-    # transactions = relationship("LoanTransaction", back_populates="loan", cascade="all, delete-orphan")
-    # amortization_schedule = relationship("AmortizationSchedule", uselist=False, back_populates="loan", cascade="all, delete-orphan")
-
-
-# ---------------------------------------------------------------------------
-# ---------------------------------------------------------------------------
-# Transactions - General ledger transactions
-# ---------------------------------------------------------------------------
-class Transaction(Base):
-    __tablename__ = "transactions"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    
-    transaction_date = Column(Date, nullable=False, index=True)
-    transaction_type = Column(String(50), nullable=False)
-    
-    # Reference to related entities
-    loan_id = Column(BigInteger, ForeignKey("loans.id"), nullable=True, index=True)
-    savings_account_id = Column(BigInteger, ForeignKey("savings_accounts.id"), nullable=True, index=True)
-    
-    amount = Column(Numeric(15, 2), nullable=False)
-    description = Column(Text, nullable=True)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-# ---------------------------------------------------------------------------
-# Ledger Entries - General ledger entries
-# ---------------------------------------------------------------------------
-class LedgerEntry(Base):
-    __tablename__ = "ledger_entries"
-
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    
-    transaction_id = Column(BigInteger, ForeignKey("transactions.id"), nullable=False, index=True)
-    transaction = relationship("Transaction", backref="ledger_entries")
-    
-    account_id = Column(BigInteger, ForeignKey("gl_accounts.id"), nullable=False, index=True)
-    gl_account = relationship("GLAccount", backref="ledger_entries")
-    
-    debit_amount = Column(Numeric(15, 2), default=0.00)
-    credit_amount = Column(Numeric(15, 2), default=0.00)
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
-
-
-# ---------------------------------------------------------------------------
 # Standing Orders - Recurring payments
 # ---------------------------------------------------------------------------
 class StandingOrder(Base):
@@ -303,24 +225,4 @@ class StandingOrder(Base):
     )
 
 
-# ---------------------------------------------------------------------------
-# Interest Ledger - Tracks interest calculations
-# ---------------------------------------------------------------------------
-class InterestLedger(Base):
-    __tablename__ = "interest_ledger"
 
-    id = Column(BigInteger, primary_key=True, autoincrement=True)
-    
-    account_id = Column(BigInteger, ForeignKey("savings_accounts.id"), nullable=False, index=True)
-    account = relationship("SavingsAccount", backref="interest_ledger")
-    
-    interest_rate = Column(Numeric(5, 2), nullable=False)
-    principal_amount = Column(Numeric(15, 2), nullable=False)
-    interest_amount = Column(Numeric(15, 2), nullable=False)
-    
-    period_start = Column(Date, nullable=False)
-    period_end = Column(Date, nullable=False)
-    
-    posted_date = Column(DateTime(timezone=True), server_default=func.now())
-    
-    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)

@@ -18,8 +18,9 @@ logging.basicConfig(level=logging.INFO)
 
 # Import database connections - PostgreSQL only
 from ..database import get_async_session_local
-from ..database.pg_core_models import User, Customer, SavingsAccount, Loan, SavingsTransaction
+from ..database.pg_core_models import User, Customer, SavingsAccount, SavingsTransaction
 from ..database.pg_loan_models import LoanApplication, PGLoanProduct
+from ..database.pg_loan_models import LoanApplication as Loan
 from ..database.pg_models import (
     Branch,
     AuditLog,

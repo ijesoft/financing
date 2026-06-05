@@ -7,7 +7,7 @@ from typing import List, Optional
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select, desc, func
 
-from ..database.pg_core_models import User, Customer, SavingsAccount, Loan, Transaction, LedgerEntry, StandingOrder, InterestLedger
+from ..database.pg_core_models import User, Customer, SavingsAccount, StandingOrder
 from ..database.pg_loan_models import PGLoanProduct, LoanApplication, LoanTransaction, AmortizationSchedule
 from ..models import UserCreate, UserUpdate, UserInDB, CustomerCreate, CustomerUpdate, CustomerInDB
 from ..auth.security import get_password_hash, verify_password
@@ -438,103 +438,3 @@ class SavingsAccountCRUD:
         await self.db.delete(account)
         await self.db.commit()
         return True
-
-
-# ---------------------------------------------------------------------------
-# Loan CRUD (PostgreSQL)
-# ---------------------------------------------------------------------------
-class LoanCRUD:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
-    async def create_loan(self, loan: Loan) -> Loan:
-        self.db.add(loan)
-        await self.db.commit()
-        await self.db.refresh(loan)
-        return loan
-
-    async def get_loan_by_id(self, loan_id: int) -> Optional[Loan]:
-        result = await self.db.execute(
-            select(Loan).where(Loan.id == loan_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_loan_by_loan_id(self, loan_id: str) -> Optional[Loan]:
-        result = await self.db.execute(
-            select(Loan).where(Loan.loan_id == loan_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_loans_by_customer(self, customer_id: int, skip: int = 0, limit: int = 100) -> List[Loan]:
-        result = await self.db.execute(
-            select(Loan)
-            .where(Loan.customer_id == customer_id)
-            .offset(skip)
-            .limit(limit)
-        )
-        return result.scalars().all()
-
-    async def update_loan(self, loan_id: int, update_data: dict) -> Optional[Loan]:
-        result = await self.db.execute(
-            select(Loan).where(Loan.id == loan_id)
-        )
-        loan = result.scalar_one_or_none()
-        if not loan:
-            return None
-
-        for field, value in update_data.items():
-            if value is not None:
-                setattr(loan, field, value)
-
-        await self.db.commit()
-        await self.db.refresh(loan)
-        return loan
-
-    async def delete_loan(self, loan_id: int) -> bool:
-        result = await self.db.execute(
-            select(Loan).where(Loan.id == loan_id)
-        )
-        loan = result.scalar_one_or_none()
-        if not loan:
-            return False
-
-        await self.db.delete(loan)
-        await self.db.commit()
-        return True
-
-
-# ---------------------------------------------------------------------------
-# Transaction CRUD (PostgreSQL)
-# ---------------------------------------------------------------------------
-class TransactionCRUD:
-    def __init__(self, db: AsyncSession):
-        self.db = db
-
-    async def create_transaction(self, transaction: Transaction) -> Transaction:
-        self.db.add(transaction)
-        await self.db.commit()
-        await self.db.refresh(transaction)
-        return transaction
-
-    async def get_transaction_by_id(self, transaction_id: str) -> Optional[Transaction]:
-        result = await self.db.execute(
-            select(Transaction).where(Transaction.transaction_id == transaction_id)
-        )
-        return result.scalar_one_or_none()
-
-    async def get_transactions_by_account(self, account_id: int, skip: int = 0, limit: int = 100) -> List[Transaction]:
-        result = await self.db.execute(
-            select(Transaction)
-            .where(Transaction.account_id == account_id)
-            .offset(skip)
-            .limit(limit)
-            .order_by(desc(Transaction.timestamp))
-        )
-        return result.scalars().all()
-
-    async def count_transactions_by_account(self, account_id: int) -> int:
-        result = await self.db.execute(
-            select(func.count(Transaction.id))
-            .where(Transaction.account_id == account_id)
-        )
-        return result.scalar_one()

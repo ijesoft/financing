@@ -9,8 +9,7 @@ from sqlalchemy.orm import sessionmaker
 # Import models to register with Base - but DON'T create engine yet
 from .base import Base
 from .pg_core_models import (
-    User, Customer, SavingsAccount, SavingsTransaction, Loan,
-    Transaction, LedgerEntry, StandingOrder, InterestLedger
+    User, Customer, SavingsAccount, SavingsTransaction, StandingOrder
 )
 from .pg_loan_models import (
     PGLoanProduct, LoanApplication, LoanCollateral, LoanGuarantor,
