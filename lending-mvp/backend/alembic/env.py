@@ -1,5 +1,6 @@
 import asyncio
 import os
+import sys
 from logging.config import fileConfig
 
 from sqlalchemy import pool, create_engine
@@ -9,18 +10,17 @@ from sqlalchemy.ext.asyncio import async_engine_from_config
 from alembic import context
 
 # ── Import our models so metadata is populated ────────────────────────────────
-# NOTE: We don't import models here to avoid import issues with Alembic
-# The migrations define the schema manually using op.create_table()
-# import sys
-# sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
-# from app.database.pg_models import Base
-# import app.database.pg_core_models  # Users, Customers, Transactions
-# import app.database.pg_loan_models
-# import app.database.pg_accounting_models
+# Add backend root to sys.path so `app.*` imports resolve, then import the
+# SQLAlchemy `Base` (and the model modules that register their tables on it).
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
+from app.database.pg_models import Base  # noqa: E402
+import app.database.pg_core_models  # noqa: E402,F401  - registers tables on Base.metadata
+import app.database.pg_loan_models  # noqa: E402,F401
+import app.database.pg_accounting_models  # noqa: E402,F401
 
-# Instead, use an empty metadata that Alembic will populate from migrations
-from sqlalchemy import MetaData
-target_metadata = MetaData()
+# Use the populated Base.metadata so `alembic revision --autogenerate`
+# can detect model drift against the live DB schema.
+target_metadata = Base.metadata
 
 # ── Alembic config ────────────────────────────────────────────────────────────
 config = context.config
