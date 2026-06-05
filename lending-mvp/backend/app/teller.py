@@ -13,6 +13,7 @@ from app.schema import (
 # from app.main import db  # TODO: Implement MongoDB setup
 # from app.audit_middleware import audit_log
 from app.worker import send_notification
+from app.auth.authentication import get_current_user
 
 router = APIRouter(prefix="/api/v1/teller", tags=["Teller Operations"])
 
@@ -305,76 +306,34 @@ class TellerOperations:
 @router.post("/cash-drawer/open", response_model=CashDrawerSession)
 async def open_cash_drawer(
     data: CashDrawerOpening,
-    current_user: dict = Depends(...)
+    current_user: dict = Depends(get_current_user),
 ):
     """Open teller cash drawer session"""
     result = await TellerOperations.open_cash_drawer(data)
-    
-    # await audit_log(
-        user_id=str(current_user["id"]),
-        action="CASH_DRAWER_OPENED",
-        details=f"Opened cash drawer with initial amount {data.initial_amount}",
-        metadata={"session_id": result.session_id}
-    )
-        title="Cash Drawer Opened",
-        message=f"Your cash drawer session has been opened with {data.initial_amount}",
-        type="teller"
-    )
-    
     return result
 
 @router.post("/cash-drawer/close", response_model=CashDrawerSession)
 async def close_cash_drawer(
     data: CashDrawerClosing,
-    current_user: dict = Depends(...)
+    current_user: dict = Depends(get_current_user),
 ):
     """Close and reconcile teller cash drawer"""
     result = await TellerOperations.close_cash_drawer(data)
-    
-    variance_msg = ""
-    if result.variance != 0:
-        variance_msg = f" with variance of {result.variance}"
-    
-    # await audit_log(
-                user_id=str(current_user["id"]),
-        action="CASH_DRAWER_OPENED",
-        details=f"Opened cash drawer with initial amount {data.initial_amount}",
-        metadata={"session_id": result.session_id}
-    )
-        user_id=str(current_user["id"]),
-        title="Cash Drawer Closed",
-        message=f"Your cash drawer session has been closed{variance_msg}",
-        type="teller"
-    )
-    
     return result
 
 @router.post("/cash-drawer/transaction", response_model=dict)
 async def process_cash_transaction(
     data: CashDrawerTransaction,
-    current_user: dict = Depends(...)
+    current_user: dict = Depends(get_current_user),
 ):
     """Process a cash drawer transaction"""
     result = await TellerOperations.process_transaction(data)
-    
-    # await audit_log(
-                user_id=str(current_user["id"]),
-        action="CASH_DRAWER_OPENED",
-        details=f"Opened cash drawer with initial amount {data.initial_amount}",
-        metadata={"session_id": result.session_id}
-    )
-        user_id=str(current_user["id"]),
-        title="Transaction Processed",
-        message=f"Your {data.transaction_type} transaction of {data.amount} has been processed",
-        type="teller"
-    )
-    
     return result
 
 @router.get("/cash-drawer/{session_id}/balance", response_model=dict)
 async def get_cash_drawer_balance(
     session_id: str,
-    current_user: dict = Depends(...)
+    current_user: dict = Depends(get_current_user),
 ):
     """Get current cash drawer balance"""
     return await TellerOperations.get_current_balance(session_id)
@@ -382,14 +341,8 @@ async def get_cash_drawer_balance(
 @router.post("/transaction-limits", response_model=TransactionLimitConfig)
 async def set_transaction_limits(
     data: TransactionLimitCreate,
-    current_user: dict = Depends(...)
+    current_user: dict = Depends(get_current_user),
 ):
     """Set transaction limits for a role"""
     result = await TellerOperations.set_transaction_limits(data)
-    
-    # await audit_log(
-                user_id=str(current_user["id"]),
-        action="CASH_DRAWER_OPENED",
-        details=f"Opened cash drawer with initial amount {data.initial_amount}",
-        metadata={"session_id": result.session_id}
-    )
+    return result
