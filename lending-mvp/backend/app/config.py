@@ -1,10 +1,13 @@
-from pydantic_settings import BaseSettings
+from pydantic import Field
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
     # ── PostgreSQL (primary database) ─────────────────────────────────────────
     database_url: str = "postgresql+asyncpg://lending_user:lending_secret@localhost:5433/lending_db"
-    
+
     # PostgreSQL 16 support (upgrade from 15)
     # Use postgres:16-alpine in docker-compose.yml
 
@@ -12,7 +15,9 @@ class Settings(BaseSettings):
     redis_url: str = "redis://:lending_redis_pass@redis:6379/0"
 
     # ── JWT ───────────────────────────────────────────────────────────────────
-    JWT_SECRET_KEY: str = "09d25e094faa6ca2556c818166b7a9563b93f7099f6f0f4caa6cf63b88e8d3e7"
+    # No hard-coded default — must be supplied via env, minimum 32 chars.
+    # Generate with:  python -c "import secrets; print(secrets.token_urlsafe(64))"
+    JWT_SECRET_KEY: str = Field(..., min_length=32)
     ALGORITHM: str = "HS256"
     ACCESS_TOKEN_EXPIRE_MINUTES: int = 15          # Short-lived access tokens
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30            # Long-lived refresh tokens
@@ -24,10 +29,5 @@ class Settings(BaseSettings):
     # ── File Uploads (KYC docs) ───────────────────────────────────────────────
     UPLOAD_DIR: str = "/tmp/kyc_uploads"
 
-    class Config:
-        env_file = ".env"
-        extra = "ignore"
-
 
 settings = Settings()
-
