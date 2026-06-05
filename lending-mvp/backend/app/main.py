@@ -25,6 +25,19 @@ from . import graphql as graphql_module  # Real Strawberry GraphQL endpoint
 
 logger = logging.getLogger(__name__)
 
+
+def _should_seed_demo_data() -> bool:
+    """Return True iff SEED_DEMO_DATA=true AND ENVIRONMENT is unset or 'development'."""
+    seed_demo = os.getenv("SEED_DEMO_DATA", "false").lower() == "true"
+    environment = os.getenv("ENVIRONMENT", "development")
+    if seed_demo and environment != "development":
+        logger.warning(
+            "SEED_DEMO_DATA=true but ENVIRONMENT=%s — refusing to seed demo data",
+            environment,
+        )
+    return seed_demo and environment == "development"
+
+
 # --- Pydantic Models for REST ---
 class LoginRequest(BaseModel):
     username: str
@@ -50,15 +63,14 @@ async def lifespan(app: FastAPI):
     
     # Seed Demo Data (if enabled) - PostgreSQL-only
     try:
-        seed_demo = os.getenv("SEED_DEMO_DATA", "false").lower() == "true"
-        if seed_demo and DEMO_SEEDER_AVAILABLE:
+        if not _should_seed_demo_data():
+            logger.info("Demo data seeding disabled (set SEED_DEMO_DATA=true to enable)")
+        elif DEMO_SEEDER_AVAILABLE:
             logger.info("🌱 Seeding demo data (PostgreSQL-enhanced)...")
             await seed_demo_data_enhanced()
             logger.info("✅ Demo data seeded successfully")
-        elif seed_demo and not DEMO_SEEDER_AVAILABLE:
-            logger.warning("Demo data seeding requested but enhanced seeder not available. Install pymongo or use demo_seeder_enhanced.py")
         else:
-            logger.info("Demo data seeding disabled (set SEED_DEMO_DATA=true to enable)")
+            logger.warning("Demo data seeding requested but enhanced seeder not available. Install pymongo or use demo_seeder_enhanced.py")
     except Exception as exc:
         logger.warning("Demo data seeding failed (non-fatal): %s", exc)
     
