@@ -20,7 +20,7 @@ from .auth.totp import generate_qr_base64, generate_totp_secret, get_totp_uri, v
 from .config import settings
 from .database.pg_user_crud import UserCRUD
 from .database.pg_models import AuditLog, PasswordHistory, UserSession, UserBranchAssignment
-from .database.postgres import AsyncSessionLocal
+from .database import get_async_session_local
 from .database.redis_client import get_redis
 from .models import PyObjectId, UserCreate, UserInDB, UserUpdate
 from .schema import LoginInput, LoginResponse, UserCreateInput, UserResponse, UsersResponse, UserType, UserUpdateInput
@@ -144,7 +144,7 @@ class Query:
             raise Exception("Not authorized — admin or auditor role required")
 
         try:
-            async with AsyncSessionLocal() as session:
+            async with get_async_session_local()() as session:
                 stmt = select(AuditLog).order_by(desc(AuditLog.created_at))
                 if search_term:
                     from sqlalchemy import or_, cast, String
@@ -371,10 +371,11 @@ class Mutation:
     @strawberry.field
     async def create_user(self, info: Info, input: UserCreateInput) -> UserResponse:
         """Create a new user. Admin only."""
-        # Allow first-time registration without auth (bootstrap scenario)
-        # current_user = info.context.get("current_user")
-        # if not current_user or current_user.role != "admin":
-        #     raise Exception("Not authorized")
+        # AuthZ: admin role required. Raise BEFORE the try/except so the
+        # broad exception handler in this resolver cannot swallow it.
+        current_user: UserInDB = info.context.get("current_user")
+        if not current_user or current_user.role != "admin":
+            raise Exception("admin role required")
 
         # Validate role
         if input.role not in VALID_ROLES:
@@ -406,7 +407,7 @@ class Mutation:
             user_db = await user_crud.create_user(user_create)
 
             # Store initial password in history
-            async with AsyncSessionLocal() as session:
+            async with get_async_session_local()() as session:
                 session.add(PasswordHistory(
                     user_id=str(user_db.id),
                     hashed_password=user_db.hashed_password,
@@ -443,6 +444,15 @@ class Mutation:
         if not current_user or (current_user.role != "admin" and str(current_user.id) != user_id):
             raise Exception("Not authorized")
 
+        # AuthZ: only admins can change role, and admins cannot promote
+        # (or demote) themselves — that escalation must be done by a
+        # second admin to maintain the principle of two-person control.
+        if input.role is not None:
+            if current_user.role != "admin":
+                raise Exception("not authorized: only admins can change role")
+            if str(current_user.id) == user_id:
+                raise Exception("not authorized: cannot change your own role")
+
         # Validate role if being changed
         if input.role and input.role not in VALID_ROLES:
             return UserResponse(success=False, message=f"Invalid role. Choose from: {', '.join(sorted(VALID_ROLES))}")
@@ -454,7 +464,7 @@ class Mutation:
                 return UserResponse(success=False, message=reason)
 
             # Check history
-            async with AsyncSessionLocal() as session:
+            async with get_async_session_local()() as session:
                 result = await session.execute(
                     select(PasswordHistory)
                     .where(PasswordHistory.user_id == user_id)
@@ -483,7 +493,7 @@ class Mutation:
 
             # Persist new password to history
             if input.password and user_db:
-                async with AsyncSessionLocal() as session:
+                async with get_async_session_local()() as session:
                     session.add(PasswordHistory(
                         user_id=str(user_db.id),
                         hashed_password=user_db.hashed_password,
@@ -492,7 +502,7 @@ class Mutation:
 
             # Persist branch assignment changes
             if input.branch_id is not None or input.branch_code is not None:
-                async with AsyncSessionLocal() as session:
+                async with get_async_session_local()() as session:
                     from sqlalchemy import select as sa_select
                     existing_ba = await session.execute(
                         sa_select(UserBranchAssignment).where(

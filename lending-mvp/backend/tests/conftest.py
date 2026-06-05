@@ -22,6 +22,12 @@ from app.database.pg_loan_models import PGLoanProduct
 # Create a separate test database URL - use localhost with correct port
 TEST_DATABASE_URL = "postgresql+asyncpg://lending_user:lending_secret@localhost:5433/lending_test_db"
 
+# Force settings to use the async-compatible test URL. This prevents
+# `app.database.postgres` (and any module that eagerly creates an engine
+# at import time) from blowing up with "psycopg2 is not async" because
+# the developer's .env points at a sync driver.
+settings.database_url = TEST_DATABASE_URL
+
 
 @pytest.fixture(scope="session")
 def event_loop():
