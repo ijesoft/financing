@@ -5,13 +5,15 @@ This module provides REST endpoints that the frontend can use instead of GraphQL
 
 from fastapi import APIRouter, HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
+from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
-from typing import Optional
+from typing import List, Optional
 import logging
 
-from .database import get_async_session_local
+from .database import get_async_session_local, get_db_session
 from .database.pg_core_models import User, Customer
+from .auth.dependencies import get_current_user, require_admin
 from .auth.security import verify_password, create_access_token, create_refresh_token
 from .auth.rbac import get_sql_branch_filter
 
@@ -21,70 +23,64 @@ router = APIRouter()
 oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api-login/")
 
 
-# ── Auth Endpoints ───────────────────────────────────────────────────────────
-@router.post("/api-login/")
-async def api_login(username: str, password: str, totp_code: Optional[str] = None):
-    """Login endpoint."""
-    session_factory = get_async_session_local()
-    async with session_factory() as session:
-        result = await session.execute(
-            select(User).where(User.username == username)
-        )
-        user = result.scalar_one_or_none()
-        
-        if not user or not verify_password(password, user.hashed_password):
-            raise HTTPException(status_code=401, detail="Incorrect username or password")
-        
-        if not user.is_active:
-            raise HTTPException(status_code=400, detail="Inactive user")
-        
-        user_id = str(user.uuid if user.uuid is not None else user.id)
-        access_token = create_access_token({"sub": user_id})
-        refresh_token, jti = create_refresh_token({"sub": user_id})
-        
-        return {
-            "accessToken": access_token,
-            "tokenType": "bearer",
-            "refreshToken": refresh_token,
-            "user": {
-                "id": user_id,
-                "username": user.username,
-                "email": user.email,
-                "fullName": user.full_name,
-                "isActive": user.is_active,
-                "role": user.role,
-            }
-        }
+# ── Response Models ──────────────────────────────────────────────────────────
+class UserResponseModel(BaseModel):
+    id: str
+    email: str
+    username: str
+    fullName: str
+    isActive: bool
+    role: str
+    createdAt: Optional[str] = None
+    updatedAt: Optional[str] = None
+
+
+class UsersListResponse(BaseModel):
+    success: bool
+    message: str
+    users: List[UserResponseModel]
+    total: int
+
+
+# ── Auth Endpoints (legacy; re-enabled in main.py via login_endpoint) ────────
+# Kept disabled here — login_endpoint.py owns /api-login/ in the new stack.
+# @router.post("/api-login/")
+# async def api_login(username: str, password: str, totp_code: Optional[str] = None):
+#     """Login endpoint."""
+#     ...
 
 
 # ── Users Endpoints ──────────────────────────────────────────────────────────
-@router.get("/api/users")
-async def get_users(skip: int = 0, limit: int = 100):
-    """Get all users."""
-    session_factory = get_async_session_local()
-    async with session_factory() as session:
-        result = await session.execute(
-            select(User).offset(skip).limit(limit)
-        )
-        users = result.scalars().all()
-        return {
-            "success": True,
-            "message": "Users retrieved successfully",
-            "users": [
-                {
-                    "id": str(u.uuid if u.uuid is not None else u.id),
-                    "email": u.email,
-                    "username": u.username,
-                    "fullName": u.full_name,
-                    "isActive": u.is_active,
-                    "role": u.role,
-                    "createdAt": str(u.created_at),
-                    "updatedAt": str(u.updated_at),
-                }
-                for u in users
-            ],
-            "total": len(users),
-        }
+@router.get("/api/users", response_model=UsersListResponse)
+async def get_users(
+    skip: int = 0,
+    limit: int = 100,
+    current_user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db_session),
+):
+    """Get all users. Admin only."""
+    result = await db.execute(
+        select(User).offset(skip).limit(limit)
+    )
+    users = result.scalars().all()
+    return UsersListResponse(
+        success=True,
+        message="Users retrieved successfully",
+        users=[
+            UserResponseModel(
+                id=str(u.uuid if u.uuid is not None else u.id),
+                email=u.email,
+                username=u.username,
+                fullName=u.full_name,
+                isActive=u.is_active,
+                role=u.role,
+                createdAt=str(u.created_at) if u.created_at else None,
+                updatedAt=str(u.updated_at) if u.updated_at else None,
+            )
+            for u in users
+        ],
+        total=len(users),
+    )
 
 
 @router.get("/api/health")
