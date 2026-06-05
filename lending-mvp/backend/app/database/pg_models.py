@@ -189,6 +189,14 @@ class PasswordHistory(Base):
     hashed_password = Column(String(200), nullable=False)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
 
+    __table_args__ = (
+        Index(
+            "ix_password_history_user_created",
+            "user_id",
+            created_at.desc(),
+        ),
+    )
+
 
 # ---------------------------------------------------------------------------
 # AML Alerts (BSP Circular 1048, RA 9160)
