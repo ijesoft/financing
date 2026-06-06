@@ -77,8 +77,9 @@ model User {
   username        String   @unique
   full_name       String
   role            Role
-  hashed_password String
-  is_active       Boolean  @default(true)
+  hashed_password    String
+  must_change_password Boolean @default(true) // enforced on first login for seeded accounts
+  is_active          Boolean  @default(true)
   created_at      DateTime @default(now())
   updated_at      DateTime @updatedAt
 }
@@ -102,7 +103,7 @@ model Customer {
   tin_no            String?
   sss_no            String?
   permanent_address String?
-  birth_date        DateTime?
+  birth_date        DateTime? @db.Date
   birth_place       String?
   mobile_number     String?
   email_address     String?
@@ -237,7 +238,7 @@ async def get_customers(info):
   }
   ```
 
-  Auto-registration convention: any mutation not in this map defaults to invalidating `["dashboard"]` (safe fallback — dashboard aggregates everything).
+  Convention-based invalidation: mutation name is used to derive entity tags. E.g., `createLoan` → `["loans", "dashboard"]`, `updateCustomer` → `["customers", "dashboard"]`. The explicit map above serves as documentation; the decorator auto-derives tags from mutation names using pluralized noun extraction. Any mutation not matching a known pattern defaults to invalidating `["dashboard"]`.
 
   Query→tag registration via decorator parameter:
 
@@ -267,7 +268,7 @@ If Redis is down, queries serve uncached data from the database. No crash, no do
 backend/app/
 ├── main.py                    # unchanged (startup, CORS, routes)
 ├── config.py                  # DATABASE_URL → DB_URL + REDIS_URL
-├── models.py                  # remove PyObjectId, keep Pydantic models (no _id alias)
+├── models.py                  # remove PyObjectId/bson; change id fields from `_id` ObjectId to `id` UUID (str); update json_encoders
 │
 ├── database/                  # ← REPLACE entirely
 │   ├── __init__.py            # motor client → prisma client init
@@ -307,7 +308,8 @@ backend/app/
 ## Error Handling
 
 - **DB errors**: Prisma's `UniqueViolation` → HTTP 409, `RecordNotFound` → HTTP 404
-- **FK violations**: e.g., deleting a customer with active loans → HTTP 409 with message "Cannot delete: customer has active loans"
+- **FK violations**: e.g., deleting a customer with active loans → Prisma throws `P2003`, caught and translated to HTTP 409 with message "Cannot delete: customer has active loans"
+- **DB transactions**: multi-table writes (e.g., loan disbursement writes to `Loan` + `LedgerEntry`) use Prisma's `$transaction` for atomicity — all succeed or all roll back
 - **Redis errors**: fail open — serve uncached data if Redis is down. If Redis is down during a mutation's cache invalidation, the mutation still succeeds (DB write is not affected), but stale cached data may exist until TTL expires. This is acceptable — data eventually becomes consistent.
 - **Startup checks**:
   - PostgreSQL: required. App fails to start if unreachable.
