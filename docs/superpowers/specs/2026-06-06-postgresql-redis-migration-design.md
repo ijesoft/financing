@@ -51,6 +51,133 @@
 - **Enums** for `entry_type` (debit/credit), `role`, `loan_status` — type safety at DB level
 - **Timestamps** as `timestamptz` with DB-level defaults (`DEFAULT NOW()`)
 
+### Prisma Schema Definition
+
+```prisma
+generator client {
+  provider = "prisma-client-py"
+  output   = "../app/database/generated"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Role { ADMIN; TELLER; BORROWER }
+enum EntryType { DEBIT; CREDIT }
+enum LoanStatus { PENDING; ACTIVE; PAID_OFF; DEFAULTED }
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  username     String   @unique
+  full_name    String
+  role         Role
+  hashed_password String
+  is_active    Boolean  @default(true)
+  created_at   DateTime @default(now())
+  updated_at   DateTime @updatedAt
+
+  customers    Customer[]
+}
+
+model Branch {
+  id          String   @id @default(uuid())
+  name        String   @unique
+  address     String?
+  created_at  DateTime @default(now())
+
+  customers   Customer[]
+}
+
+model Customer {
+  id                String   @id @default(uuid())
+  customer_type     String
+  last_name         String?
+  first_name        String?
+  display_name      String   @unique
+  middle_name       String?
+  tin_no            String?
+  sss_no            String?
+  permanent_address String?
+  birth_date        DateTime?
+  birth_place       String?
+  mobile_number     String?
+  email_address     String?
+  employer_name_address String?
+  job_title         String?
+  salary_range      String?
+  company_name      String?
+  company_address   String?
+  branch_id         String
+  created_at        DateTime @default(now())
+  updated_at        DateTime @updatedAt
+
+  branch            Branch   @relation(fields: [branch_id], references: [id])
+  loans             Loan[]
+  savings           Savings[]
+}
+
+model LoanProduct {
+  id          String   @id @default(uuid())
+  name        String
+  interest_rate Decimal @db.Decimal(5, 2)
+  max_amount  Decimal  @db.Decimal(16, 2)
+  term_months Int
+  created_at  DateTime @default(now())
+
+  loans       Loan[]
+}
+
+model Loan {
+  id              String     @id @default(uuid())
+  customer_id     String
+  loan_product_id String
+  amount          Decimal    @db.Decimal(16, 2)
+  status          LoanStatus @default(PENDING)
+  disbursement_date DateTime?
+  maturity_date   DateTime?
+  created_at      DateTime   @default(now())
+  updated_at      DateTime   @updatedAt
+
+  customer        Customer     @relation(fields: [customer_id], references: [id])
+  loan_product    LoanProduct  @relation(fields: [loan_product_id], references: [id])
+  transactions    LoanTransaction[]
+}
+
+model LoanTransaction {
+  id          String   @id @default(uuid())
+  loan_id     String
+  amount      Decimal  @db.Decimal(16, 2)
+  payment_date DateTime
+  transaction_type String // e.g., "principal", "interest", "penalty"
+  notes       String?
+  created_at  DateTime @default(now())
+
+  loan        Loan     @relation(fields: [loan_id], references: [id])
+}
+
+model LedgerEntry {
+  id             String    @id @default(uuid())
+  transaction_id String
+  account        String
+  amount         Decimal   @db.Decimal(16, 2)
+  entry_type     EntryType
+  timestamp      DateTime  @default(now())
+}
+
+model Savings {
+  id          String   @id @default(uuid())
+  customer_id String
+  amount      Decimal  @db.Decimal(16, 2)
+  created_at  DateTime @default(now())
+  updated_at  DateTime @updatedAt
+
+  customer    Customer @relation(fields: [customer_id], references: [id])
+}
+```
+
 ## Redis Caching Strategy
 
 ### Approach
@@ -70,8 +197,21 @@ async def get_customers(info):
   - 60s for list queries (customers, loans, etc.)
   - 300s for dashboard/aggregated data
   - 0 for mutations (not cached)
-- **Invalidation**: On any mutation, invalidate all caches for affected entity types
-  - e.g., `createLoan` invalidates `Loan*` and `Dashboard*` caches
+- **Invalidation**: Mutation-to-cache registry maps each mutation to the entity tags it invalidates:
+
+  ```python
+  INVALIDATION_MAP = {
+      "createLoan":     ["loans", "dashboard"],
+      "updateLoan":     ["loans", "dashboard"],
+      "deleteLoan":     ["loans", "dashboard"],
+      "createCustomer": ["customers", "dashboard"],
+      "disburseLoan":   ["loans", "ledger", "dashboard"],
+      # ... etc
+  }
+  ```
+
+  Each cached query declares which entity tags it belongs to (e.g., `get_loans` → `["loans"]`). When a mutation fires, all cache keys tagged with those entities are evicted.
+
 - **Connection pool**: shared Redis connection via `redis.asyncio.from_url`
 
 ### Fail-open Behavior
@@ -118,20 +258,22 @@ backend/app/
 ### Dependencies
 
 **Remove:** `motor`, `pymongo`, `bson`  
-**Add:** `prisma`, `asyncpg`, `redis`, `aioredis`
+**Add:** `prisma`, `asyncpg`, `redis` (v4+, includes asyncio support — no separate aioredis needed)
 
 ## Error Handling
 
 - **DB errors**: Prisma's `UniqueViolation` → HTTP 409, `RecordNotFound` → HTTP 404
 - **Redis errors**: fail open — serve uncached data if Redis is down
-- **Connection errors**: FastAPI startup event checks both PostgreSQL and Redis connectivity; fails fast if either is unreachable
+- **Startup checks**:
+  - PostgreSQL: required. App fails to start if unreachable.
+  - Redis: optional at boot. If unreachable on startup, app starts with caching disabled and logs a warning. If Redis goes down during runtime, queries continue uncached (fail-open).
 
 ## Testing
 
-- **Unit tests**: CRUD layer with Prisma test adapter
+- **Unit tests**: CRUD layer tested against a real PostgreSQL via `testcontainers` (Python testcontainers library spins up ephemeral PostgreSQL + Redis containers per test session)
 - **E2E tests**: existing Playwright tests pass unchanged — GraphQL API contract stays the same
-- **Integration**: verify cache hit/miss behavior, mutation invalidation
+- **Integration**: verify cache hit/miss behavior, mutation invalidation using testcontainers Redis
 
 ## Data Migration
 
-None required — fresh start with empty database.
+None required — fresh start with empty database. Seed data for `LoanProduct`, `Branch`, and default `User` roles will be loaded via Prisma seed script on first run.
