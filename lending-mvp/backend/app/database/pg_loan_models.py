@@ -100,8 +100,13 @@ class LoanApplication(Base):
     approved_rate = Column(Numeric(10, 4), nullable=True)
 
     status = Column(String(50), nullable=False, default="draft")
-    # Statuses: draft, submitted, reviewing, approved, active, paid, rejected, defaulted
+    # Statuses: draft, submitted, reviewing, approved, active, paid, rejected, defaulted, non_accrual, written_off
 
+    is_npl = Column(Boolean, nullable=False, default=False, index=True)
+    non_accrual_since = Column(DateTime(timezone=True), nullable=True)
+    collections_officer = Column(String(64), nullable=True)
+    assigned_collections_branch = Column(String(20), nullable=True, index=True)
+    ecl_stage = Column(String(10), nullable=True, default="S1")
 
     review_note = Column(Text, nullable=True)
     disbursement_method = Column(

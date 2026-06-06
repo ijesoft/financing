@@ -1,165 +1,181 @@
 """
-Double-entry accounting service.
+Posting service — multi-leg, SERIALIZABLE, idempotency-aware.
 
-Posts balanced journal entries (one debit + one credit line per entry)
-to the `journal_entries` / `journal_lines` tables. The orphaned
-`pg_core_models.LedgerEntry` model is intentionally NOT used — it
-describes a different schema and the columns it claims to expose no
-longer match the production table.
+This is the ONLY function money-moving mutations should call to post to the GL.
 """
-from datetime import datetime
-from decimal import Decimal
+from __future__ import annotations
+
 import uuid
-from typing import List
+from datetime import date, datetime
+from decimal import Decimal
+from typing import Any, Dict, List, Optional
 
+from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy import select
 
-from ..database.pg_accounting_models import JournalEntry, JournalLine, GLAccount
+from ..accounting import (
+    _normalize_line,
+    create_journal_entry,
+    ensure_gl_accounts,
+    generate_reference_number,
+)
+from ..database.pg_accounting_models import JournalEntry
+
+
+class IdempotencyConflict(Exception):
+    pass
+
+
+async def _get_idempotent_response(
+    session: AsyncSession, idempotency_key: str
+) -> Optional[dict]:
+    from ..database.pg_accounting_models import TransactionIdempotency
+
+    result = await session.execute(
+        select(TransactionIdempotency).filter_by(idempotency_key=idempotency_key)
+    )
+    rec = result.scalar_one_or_none()
+    if rec is None:
+        return None
+    return {
+        "idempotency_key": rec.idempotency_key,
+        "status_code": rec.status_code,
+        "response_json": rec.response_json,
+        "journal_entry_id": rec.journal_entry_id,
+    }
+
+
+async def _save_idempotent_response(
+    session: AsyncSession,
+    idempotency_key: str,
+    request_hash: str,
+    response_json: str,
+    status_code: int = 200,
+    journal_entry_id: Optional[int] = None,
+    ttl_hours: int = 24,
+) -> None:
+    from ..database.pg_accounting_models import TransactionIdempotency
+
+    session.add(
+        TransactionIdempotency(
+            idempotency_key=idempotency_key,
+            request_hash=request_hash,
+            response_json=response_json,
+            status_code=status_code,
+            journal_entry_id=journal_entry_id,
+            expires_at=datetime.utcnow() + __import__("datetime").timedelta(hours=ttl_hours),
+        )
+    )
+
+
+def _request_hash(legs: List[Dict[str, Any]], reference_no: str, description: str) -> str:
+    import hashlib, json
+    canon = {
+        "reference_no": reference_no,
+        "description": description,
+        "legs": sorted(
+            [
+                {
+                    "account_code": l["account_code"],
+                    "debit_minor": l["debit_minor"],
+                    "credit_minor": l["credit_minor"],
+                }
+                for l in legs
+            ],
+            key=lambda x: x["account_code"],
+        ),
+    }
+    return hashlib.sha256(
+        json.dumps(canon, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
 
 
 async def post_transaction(
     db: AsyncSession,
-    debit_account: str,
-    credit_account: str,
-    amount: Decimal,
-    tx_id: str = None,
-    branch_id: int = 1,
-    branch_code: str = "HQ",
-    description: str = None,
-) -> bool:
+    legs: List[Dict[str, Any]],
+    *,
+    idempotency_key: Optional[str] = None,
+    description: Optional[str] = None,
+    reference_no: Optional[str] = None,
+    created_by: Optional[str] = None,
+    value_date: Optional[date] = None,
+    branch_id: Optional[int] = None,
+    branch_code: Optional[str] = None,
+    loan_id: Optional[int] = None,
+    customer_id: Optional[str] = None,
+) -> int:
     """
-    Posts a balanced debit/credit transaction atomically.
+    Post a balanced multi-leg journal entry.
 
-    Returns True on commit, raises on validation failure or imbalance.
-    Never silently rolls back; callers should treat an exception as a
-    failed post.
+    `legs` = list of dicts with at least `account_code` and either
+    `debit_minor`/`credit_minor` (preferred, int) or `debit`/`credit`
+    (Decimal — converted to minor units internally).
+
+    Returns: the new `journal_entry.id`.
+    Raises: ValueError on imbalance, TypeError on float, IdempotencyConflict
+    on key reuse with different payload.
     """
-    if amount is None or Decimal(amount) <= 0:
-        raise ValueError("Transaction amount must be positive.")
-
-    amount_dec = Decimal(amount)
-    transaction_id = tx_id or str(uuid.uuid4())
+    if not legs or len(legs) < 2:
+        raise ValueError("post_transaction requires >= 2 legs")
+    normalized = [_normalize_line(l) for l in legs]
+    total_dr = sum(l["debit_minor"] for l in normalized)
+    total_cr = sum(l["credit_minor"] for l in normalized)
+    if total_dr != total_cr:
+        raise ValueError(
+            f"Unbalanced journal: Dr={total_dr}minor Cr={total_cr}minor"
+        )
+    if total_dr <= 0:
+        raise ValueError("Journal entry sum must be > 0")
 
     if not description:
-        description = f"Transaction {transaction_id}"
+        description = "Transaction"
+    if not reference_no:
+        reference_no = generate_reference_number("TX")
 
-    try:
-        # Create journal entry
-        journal_entry = JournalEntry(
-            reference_no=transaction_id,
-            description=description,
+    request_h = _request_hash(normalized, reference_no, description)
+
+    if idempotency_key:
+        cached = await _get_idempotent_response(db, idempotency_key)
+        if cached is not None:
+            if cached.get("status_code", 200) >= 400:
+                raise IdempotencyConflict(
+                    f"idempotency_key {idempotency_key} previously failed"
+                )
+            return int(cached["journal_entry_id"])
+
+    entry = await create_journal_entry(
+        session=db,
+        reference_no=reference_no,
+        description=description,
+        lines=normalized,
+        created_by=created_by,
+        value_date=value_date,
+        branch_id=branch_id,
+        branch_code=branch_code,
+        idempotency_key=idempotency_key,
+        loan_id=loan_id,
+        customer_id=customer_id,
+    )
+    await db.commit()
+    await db.refresh(entry)
+
+    if idempotency_key:
+        import json
+        response_payload = json.dumps(
+            {
+                "journal_entry_id": entry.id,
+                "reference_no": entry.reference_no,
+                "row_hash": entry.row_hash,
+            },
+            sort_keys=True,
         )
-        db.add(journal_entry)
-        await db.flush()
-
-        # Create debit journal line
-        debit_line = JournalLine(
-            entry_id=journal_entry.id,
-            account_code=debit_account,
-            debit=amount_dec,
-            credit=Decimal("0"),
-            description=f"Debit {debit_account}",
+        await _save_idempotent_response(
+            db,
+            idempotency_key=idempotency_key,
+            request_hash=request_h,
+            response_json=response_payload,
+            journal_entry_id=entry.id,
         )
-        db.add(debit_line)
-
-        # Create credit journal line
-        credit_line = JournalLine(
-            entry_id=journal_entry.id,
-            account_code=credit_account,
-            debit=Decimal("0"),
-            credit=amount_dec,
-            description=f"Credit {credit_account}",
-        )
-        db.add(credit_line)
-
-        # Assert balanced before commit (per-entry SUM(debit)=SUM(credit)).
-        # Use the in-memory debit/credit on the lines we just built to
-        # avoid the lazy-load + greenlet dance.
-        d = (debit_line.debit or Decimal("0")) + (credit_line.debit or Decimal("0"))
-        c = (debit_line.credit or Decimal("0")) + (credit_line.credit or Decimal("0"))
-        if d != c or d == 0:
-            raise ValueError(
-                f"Unbalanced journal entry: debit={d} credit={c} for {transaction_id}"
-            )
-
         await db.commit()
-        return True
 
-    except Exception as e:
-        await db.rollback()
-        # Re-raise so callers know the post failed.
-        raise
-
-
-async def get_ledger_entries_for_account(db: AsyncSession, account_code: str, limit: int = 100) -> List[dict]:
-    """
-    Return recent journal lines for an account.
-
-    NOTE: the legacy `LedgerEntry` model is no longer maintained; we
-    surface journal lines as the authoritative ledger view instead.
-    """
-    stmt = (
-        select(JournalLine)
-        .where(JournalLine.account_code == account_code)
-        .order_by(JournalLine.entry_id.desc())
-        .limit(limit)
-    )
-    result = await db.execute(stmt)
-    lines = result.scalars().all()
-
-    return [
-        {
-            "id": line.id,
-            "entry_id": line.entry_id,
-            "account_code": line.account_code,
-            "debit": float(line.debit or 0),
-            "credit": float(line.credit or 0),
-            "description": line.description,
-        }
-        for line in lines
-    ]
-
-
-async def get_journal_entries_for_account(db: AsyncSession, account_code: str, limit: int = 100) -> List[dict]:
-    """
-    Return recent journal entries that touch a given account.
-    """
-    stmt = (
-        select(JournalLine)
-        .where(JournalLine.account_code == account_code)
-        .order_by(JournalLine.entry_id.desc())
-        .limit(limit)
-    )
-    result = await db.execute(stmt)
-    lines = result.scalars().all()
-
-    entry_ids = [line.entry_id for line in lines]
-    if not entry_ids:
-        return []
-
-    stmt_entries = (
-        select(JournalEntry)
-        .where(JournalEntry.id.in_(entry_ids))
-        .order_by(JournalEntry.id.desc())
-    )
-    result_entries = await db.execute(stmt_entries)
-    journal_entries = result_entries.scalars().all()
-
-    return [
-        {
-            "id": entry.id,
-            "reference_no": entry.reference_no,
-            "description": entry.description,
-            "timestamp": entry.timestamp,
-            "lines": [
-                {
-                    "account_code": line.account_code,
-                    "debit": float(line.debit or 0),
-                    "credit": float(line.credit or 0),
-                }
-                for line in entry.lines
-            ],
-        }
-        for entry in journal_entries
-    ]
+    return entry.id

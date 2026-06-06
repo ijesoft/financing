@@ -16,8 +16,8 @@ from strawberry.types import Info
 # Canonical role sets
 # ---------------------------------------------------------------------------
 
-ALL_STAFF_ROLES = {"admin", "branch_manager", "loan_officer", "teller", "auditor"}
-BRANCH_SCOPED_ROLES = {"branch_manager", "loan_officer", "teller"}   # see own branch only
+ALL_STAFF_ROLES = {"admin", "branch_manager", "loan_officer", "teller", "auditor", "collections_officer"}
+BRANCH_SCOPED_ROLES = {"branch_manager", "loan_officer", "teller", "collections_officer"}   # see own branch only
 CROSS_BRANCH_ROLES = {"admin", "auditor"}                             # see all branches
 APPROVAL_ROLES = {"admin", "branch_manager"}                          # approve / disburse
 MANAGEMENT_ROLES = {"admin", "branch_manager", "loan_officer"}        # create / edit records

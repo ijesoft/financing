@@ -19,17 +19,17 @@ export default defineConfig({
         port: 3000,
         proxy: {
             '/graphql': {
-                target: 'http://lending_backend:8000',
+                target: 'http://localhost:8002',
                 changeOrigin: true,
                 secure: false,
             },
             '/api-login/': {
-                target: 'http://lending_backend:8000',
+                target: 'http://localhost:8002',
                 changeOrigin: true,
                 secure: false,
             },
             '/api': {
-                target: 'http://lending_backend:8000',
+                target: 'http://localhost:8002',
                 changeOrigin: true,
                 secure: false,
             },

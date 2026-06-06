@@ -51,7 +51,7 @@ class AuditLogsResponse:
     total: int
 
 # ── Available roles ───────────────────────────────────────────────────────────
-VALID_ROLES = {"admin", "loan_officer", "teller", "branch_manager", "auditor", "customer", "book_keeper"}
+VALID_ROLES = {"admin", "loan_officer", "teller", "branch_manager", "auditor", "customer", "book_keeper", "collections_officer"}
 
 def convert_user_db_to_user_type(user_db: UserInDB) -> UserType:
     """Convert UserInDB to UserType schema"""

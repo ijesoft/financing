@@ -3,41 +3,101 @@ import { Search, AlertCircle, FileText, Calendar, TrendingUp, CreditCard, Refres
 import { useAuth } from '@/context/AuthContext'
 import { formatCurrency } from '@/lib/utils'
 
-interface Collection {
-    id: string
+interface CollectionEntry {
+    loanId: string
     customerId: string
-    borrowerName?: string
-    amount: number
-    status: string
+    customerName: string
+    branchCode?: string
+    assignedCollectionsBranch?: string
+    installmentNo: number
     dueDate: string
-    createdAt: string
+    principalDue: number
+    interestDue: number
+    penaltyDue: number
+    totalDue: number
+    amountPaid: number
+    balanceDue: number
+    dpd: number
+    agingBucket: string
+    collectionsOfficer?: string
 }
 
 export default function CollectionDuePage() {
     const { user } = useAuth()
-    const isAdmin = user?.role === 'admin' || user?.role === 'branch_manager'
+    const isAdmin = user?.role === 'admin'
+    const isBranchManager = user?.role === 'branch_manager'
+    const isCollectionsOfficer = user?.role === 'collections_officer'
+    const canAssign = isAdmin || isBranchManager
+    const canFilter = isAdmin || isBranchManager
 
     const [loading, setLoading] = useState(true)
-    const [collectionsData, setCollectionsData] = useState<Collection[]>([])
-    const [days, setDays] = useState(7)
+    const [entries, setEntries] = useState<CollectionEntry[]>([])
+    const [datePreset, setDatePreset] = useState('today')
+    const [customFrom, setCustomFrom] = useState('')
+    const [customTo, setCustomTo] = useState('')
     const [search, setSearch] = useState('')
+    const [selectedOfficer, setSelectedOfficer] = useState('')
+    const [selectedBranch, setSelectedBranch] = useState('')
+    const [officers, setOfficers] = useState<Array<{id: string, fullName: string}>>([])
+    const [branches, setBranches] = useState<Array<{code: string, name: string}>>([])
+
+    const getDateRange = () => {
+        const today = new Date()
+        const from = new Date(today)
+        const to = new Date(today)
+        switch (datePreset) {
+            case 'today':
+                break
+            case 'week': {
+                const dayOfWeek = today.getDay()
+                from.setDate(today.getDate() - dayOfWeek)
+                to.setDate(from.getDate() + 6)
+                break
+            }
+            case 'month':
+                from.setDate(1)
+                to.setMonth(today.getMonth() + 1, 0)
+                break
+            case 'custom':
+                return { from: customFrom ? new Date(customFrom) : from, to: customTo ? new Date(customTo) : to }
+        }
+        return { from, to }
+    }
 
     const fetchData = async () => {
         setLoading(true)
         try {
             const token = localStorage.getItem('access_token')
+            const { from, to } = getDateRange()
+
+            const variables: Record<string, any> = {
+                dueDateFrom: from.toISOString().split('T')[0],
+                dueDateTo: to.toISOString().split('T')[0],
+                limit: 1000,
+                offset: 0,
+            }
+            if (canFilter && selectedBranch) variables.branchCode = selectedBranch
+            if (canFilter && selectedOfficer) variables.collectionsOfficerId = selectedOfficer
+
             const res = await fetch('/graphql', {
                 method: 'POST',
-                headers: { 
+                headers: {
                     'Content-Type': 'application/json',
                     'Authorization': token ? `Bearer ${token}` : ''
                 },
                 body: JSON.stringify({
-                    query: `query GetCollectionsDue { collectionDue { id customerId borrowerName amount status dueDate createdAt } }`
+                    query: `query GetCollectionsDue($branchCode: String, $collectionsOfficerId: String, $dueDateFrom: Date, $dueDateTo: Date, $limit: Int, $offset: Int) {
+  collectionsDue(branchCode: $branchCode, collectionsOfficerId: $collectionsOfficerId, dueDateFrom: $dueDateFrom, dueDateTo: $dueDateTo, limit: $limit, offset: $offset) {
+    entries {
+      loanId customerId customerName branchCode assignedCollectionsBranch installmentNo dueDate principalDue interestDue penaltyDue totalDue amountPaid balanceDue dpd agingBucket collectionsOfficer
+    }
+  }
+}`,
+                    variables,
                 })
             })
             const data = await res.json()
-            setCollectionsData(data.data?.collectionDue || [])
+            setEntries(data.data?.collectionsDue?.entries || [])
         } catch (e) {
             console.error('Failed to fetch collections due:', e)
         } finally {
@@ -45,53 +105,109 @@ export default function CollectionDuePage() {
         }
     }
 
-    useEffect(() => { 
-        fetchData() 
+    const fetchFilterData = async () => {
+        const token = localStorage.getItem('access_token')
+        try {
+            if (canFilter) {
+                const officerRes = await fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({
+                        query: `query { usersByRole(role: "collections_officer") { id fullName } }`
+                    })
+                })
+                const officerData = await officerRes.json()
+                setOfficers(officerData.data?.usersByRole || [])
+            }
+            if (isAdmin) {
+                const branchRes = await fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({
+                        query: `query { branches { code name } }`
+                    })
+                })
+                const branchData = await branchRes.json()
+                setBranches(branchData.data?.branches || [])
+            }
+        } catch (e) {
+            console.error('Failed to fetch filter data:', e)
+        }
+    }
+
+    useEffect(() => {
+        fetchData()
+        fetchFilterData()
     }, [])
 
-    // Filter collections based on days range
-    const filteredCollections = useMemo(() => {
-        const today = new Date()
-        const startDate = new Date(today)
-        startDate.setDate(today.getDate() - days)
-        
-        return collectionsData.filter(c => {
-            const dueDate = new Date(c.dueDate)
-            // Include collections due within the range (from startDate to today + days into future)
-            const endDate = new Date(today)
-            endDate.setDate(today.getDate() + days)
-            
-            return dueDate >= startDate && dueDate <= endDate
-        })
-    }, [collectionsData, days])
-
-    // Filter by search
-    const searchFiltered = useMemo(() => {
-        if (!search.trim()) return filteredCollections
-        const searchLower = search.toLowerCase()
-        return filteredCollections.filter(c => 
-            c.borrowerName?.toLowerCase().includes(searchLower) ||
-            c.customerId.toLowerCase().includes(searchLower) ||
-            c.id.toLowerCase().includes(searchLower)
-        )
-    }, [filteredCollections, search])
-
-    // Calculate totals
-    const totalDue = searchFiltered.reduce((sum, c) => sum + c.amount, 0)
-    const overdueCount = searchFiltered.filter(c => {
-        const dueDate = new Date(c.dueDate)
-        return dueDate < new Date() && c.status !== 'collected'
-    }).length
-    const pendingCount = searchFiltered.filter(c => c.status === 'pending').length
-    const collectedCount = searchFiltered.filter(c => c.status === 'collected').length
-
-    const getStatusColor = (status: string) => {
-        const colors: { [key: string]: string } = {
-            'pending': 'bg-amber-500/20 text-amber-400',
-            'overdue': 'bg-red-500/20 text-red-400',
-            'collected': 'bg-emerald-500/20 text-emerald-400'
+    const assignOfficer = async (loanId: string, officerId: string) => {
+        const token = localStorage.getItem('access_token')
+        try {
+            await fetch('/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                body: JSON.stringify({
+                    query: `mutation ($loanId: ID!, $collectionsOfficerId: String) {
+                        assignLoanCollectionsOfficer(loanId: $loanId, collectionsOfficerId: $collectionsOfficerId) { success message }
+                    }`,
+                    variables: { loanId, collectionsOfficerId: officerId || null }
+                })
+            })
+            fetchData()
+        } catch (e) {
+            console.error('Failed to assign officer:', e)
         }
-        return colors[status] || 'bg-gray-500/20 text-gray-400'
+    }
+
+    const assignBranch = async (loanId: string, branchCode: string) => {
+        const token = localStorage.getItem('access_token')
+        try {
+            await fetch('/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                body: JSON.stringify({
+                    query: `mutation ($loanId: ID!, $branchCode: String) {
+                        assignLoanCollectionsBranch(loanId: $loanId, branchCode: $branchCode) { success message }
+                    }`,
+                    variables: { loanId, branchCode: branchCode || null }
+                })
+            })
+            fetchData()
+        } catch (e) {
+            console.error('Failed to assign branch:', e)
+        }
+    }
+
+    const searchFiltered = useMemo(() => {
+        if (!search.trim()) return entries
+        const q = search.toLowerCase()
+        return entries.filter(e =>
+            e.customerName?.toLowerCase().includes(q) ||
+            e.customerId.toLowerCase().includes(q) ||
+            e.loanId.toLowerCase().includes(q)
+        )
+    }, [entries, search])
+
+    const totalBalanceDue = searchFiltered.reduce((sum, e) => sum + e.balanceDue, 0)
+    const overdueCount = searchFiltered.filter(e => e.dpd > 0).length
+    const dueTodayCount = searchFiltered.filter(e => e.dpd === 0).length
+    const totalPrincipalDue = searchFiltered.reduce((sum, e) => sum + e.principalDue, 0)
+
+    const getDpdColor = (dpd: number) => {
+        if (dpd > 30) return 'text-red-400'
+        if (dpd > 0) return 'text-amber-400'
+        return 'text-emerald-400'
+    }
+
+    const getAgingBadge = (bucket: string) => {
+        const colors: { [key: string]: string } = {
+            'current': 'bg-emerald-500/20 text-emerald-400',
+            '1-30_days': 'bg-amber-500/20 text-amber-400',
+            '31-60_days': 'bg-orange-500/20 text-orange-400',
+            '61-90_days': 'bg-red-500/20 text-red-400',
+            '90+_days': 'bg-rose-500/20 text-rose-400'
+        }
+        return colors[bucket] || 'bg-gray-500/20 text-gray-400'
     }
 
     return (
@@ -102,27 +218,7 @@ export default function CollectionDuePage() {
                     <p className="text-slate-400 text-sm mt-1">Loan repayment schedule and receivables overview</p>
                 </div>
                 <div className="flex gap-2">
-                    <select 
-                        value={days} 
-                        onChange={e => {
-                            setDays(Number(e.target.value))
-                            setSearch('')
-                        }} 
-                        className="px-3 py-2 rounded-lg border border-slate-600 bg-slate-800/50 focus:outline-none focus:border-blue-400 text-sm text-slate-200"
-                    >
-                        <option value={7}>Next 7 days</option>
-                        <option value={14}>Next 14 days</option>
-                        <option value={30}>Next 30 days</option>
-                        <option value={60}>Next 60 days</option>
-                        <option value={90}>Next 90 days</option>
-                    </select>
-                    <button 
-                        onClick={fetchData}
-                        className="flex items-center gap-2 px-3 py-2 rounded-lg border border-slate-600 bg-slate-800/50 hover:bg-slate-700/50 text-slate-200 text-sm transition-colors"
-                    >
-                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                    </button>
-                    {isAdmin && (
+                    {(canFilter || isCollectionsOfficer) && (
                         <button className="flex items-center gap-2 px-4 py-2 rounded-lg bg-gradient-to-r from-blue-600 to-blue-500 text-white text-sm font-medium shadow-lg hover:opacity-90 transition-opacity">
                             <FileText className="w-4 h-4" /> Generate Report
                         </button>
@@ -137,8 +233,8 @@ export default function CollectionDuePage() {
                             <Calendar className="w-5 h-5 text-amber-400" />
                         </div>
                         <div>
-                            <p className="text-xs text-slate-400 uppercase tracking-wider">Total Due ({days} days)</p>
-                            <p className="text-lg font-bold text-white">{formatCurrency(totalDue)}</p>
+                            <p className="text-xs text-slate-400 uppercase tracking-wider">Total Balance Due</p>
+                            <p className="text-lg font-bold text-white">{formatCurrency(totalBalanceDue)}</p>
                         </div>
                     </div>
                 </div>
@@ -159,8 +255,8 @@ export default function CollectionDuePage() {
                             <CreditCard className="w-5 h-5 text-blue-400" />
                         </div>
                         <div>
-                            <p className="text-xs text-slate-400 uppercase tracking-wider">Pending</p>
-                            <p className="text-lg font-bold text-white">{pendingCount}</p>
+                            <p className="text-xs text-slate-400 uppercase tracking-wider">Principal Due</p>
+                            <p className="text-lg font-bold text-white">{formatCurrency(totalPrincipalDue)}</p>
                         </div>
                     </div>
                 </div>
@@ -170,11 +266,56 @@ export default function CollectionDuePage() {
                             <TrendingUp className="w-5 h-5 text-emerald-400" />
                         </div>
                         <div>
-                            <p className="text-xs text-slate-400 uppercase tracking-wider">Collected</p>
-                            <p className="text-lg font-bold text-white">{collectedCount}</p>
+                            <p className="text-xs text-slate-400 uppercase tracking-wider">Due Today</p>
+                            <p className="text-lg font-bold text-white">{dueTodayCount}</p>
                         </div>
                     </div>
                 </div>
+            </div>
+
+            <div className="flex gap-2 flex-wrap">
+                {['today', 'week', 'month', 'custom'].map(preset => (
+                    <button
+                        key={preset}
+                        onClick={() => setDatePreset(preset)}
+                        className={`px-3 py-1.5 rounded-lg text-sm font-medium transition-colors ${
+                            datePreset === preset
+                                ? 'bg-blue-600 text-white'
+                                : 'bg-slate-800/50 text-slate-300 border border-slate-600 hover:bg-slate-700/50'
+                        }`}
+                    >
+                        {preset === 'today' ? 'Today' : preset === 'week' ? 'This Week' : preset === 'month' ? 'This Month' : 'Custom'}
+                    </button>
+                ))}
+                {datePreset === 'custom' && (
+                    <>
+                        <input type="date" value={customFrom} onChange={e => setCustomFrom(e.target.value)}
+                            className="px-2 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 text-slate-200 text-sm" />
+                        <input type="date" value={customTo} onChange={e => setCustomTo(e.target.value)}
+                            className="px-2 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 text-slate-200 text-sm" />
+                    </>
+                )}
+                {canFilter && officers.length > 0 && (
+                    <select value={selectedOfficer} onChange={e => setSelectedOfficer(e.target.value)}
+                        className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 text-slate-200 text-sm">
+                        <option value="">All Officers</option>
+                        {officers.map(o => (
+                            <option key={o.id} value={o.id}>{o.fullName}</option>
+                        ))}
+                    </select>
+                )}
+                {isAdmin && branches.length > 0 && (
+                    <select value={selectedBranch} onChange={e => setSelectedBranch(e.target.value)}
+                        className="px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 text-slate-200 text-sm">
+                        <option value="">All Branches</option>
+                        {branches.map(b => (
+                            <option key={b.code} value={b.code}>{b.name}</option>
+                        ))}
+                    </select>
+                )}
+                <button onClick={fetchData} className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-slate-600 bg-slate-800/50 hover:bg-slate-700/50 text-slate-200 text-sm transition-colors">
+                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                </button>
             </div>
 
             {loading ? (
@@ -184,11 +325,11 @@ export default function CollectionDuePage() {
                     <div className="p-4 border-b border-slate-700/50">
                         <div className="relative">
                             <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-400" />
-                            <input 
-                                value={search} 
-                                onChange={e => setSearch(e.target.value)} 
-                                placeholder="Search by customer, ID, or reference..." 
-                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-600 bg-slate-800/50 focus:outline-none focus:border-blue-400 text-slate-200" 
+                            <input
+                                value={search}
+                                onChange={e => setSearch(e.target.value)}
+                                placeholder="Search by customer, ID, or reference..."
+                                className="w-full pl-10 pr-4 py-2 rounded-lg border border-slate-600 bg-slate-800/50 focus:outline-none focus:border-blue-400 text-slate-200"
                             />
                         </div>
                     </div>
@@ -196,39 +337,70 @@ export default function CollectionDuePage() {
                         <thead>
                             <tr className="border-b border-slate-700/50">
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Customer</th>
-                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Reference No.</th>
-                                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Amount Due</th>
+                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Loan ID</th>
+                                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Total Due</th>
+                                <th className="text-right px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Balance Due</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Due Date</th>
+                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">DPD</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
-                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Days</th>
+                                {canAssign && (
+                                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Collections Officer</th>
+                                )}
+                                {canAssign && (
+                                    <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Branch</th>
+                                )}
                             </tr>
                         </thead>
                         <tbody>
                             {searchFiltered.length === 0 ? (
-                                <tr><td colSpan={6} className="text-center py-12 text-slate-400">No due collections found</td></tr>
-                            ) : searchFiltered.map((collection) => {
-                                const dueDate = new Date(collection.dueDate)
-                                const today = new Date()
-                                const daysOverdue = Math.floor((today.getTime() - dueDate.getTime()) / (1000 * 60 * 60 * 24))
-                                return (
-                                    <tr key={collection.id} className="border-b border-slate-700/30 hover:bg-slate-800/50 transition-colors">
-                                        <td className="px-4 py-3 text-white font-medium">{collection.borrowerName || collection.customerId}</td>
-                                        <td className="px-4 py-3 text-slate-400 font-mono text-xs">{collection.id.slice(-8).toUpperCase()}</td>
-                                        <td className="px-4 py-3 text-white font-medium text-right">{formatCurrency(collection.amount)}</td>
-                                        <td className="px-4 py-3 text-slate-400">{new Date(collection.dueDate).toLocaleDateString()}</td>
+                                <tr><td colSpan={9} className="text-center py-12 text-slate-400">No due collections found</td></tr>
+                            ) : searchFiltered.map((entry) => (
+                                <tr key={entry.loanId} className="border-b border-slate-700/30 hover:bg-slate-800/50 transition-colors">
+                                    <td className="px-4 py-3 text-white font-medium">{entry.customerName || entry.customerId}</td>
+                                    <td className="px-4 py-3 text-slate-400 font-mono text-xs">{entry.loanId.slice(-8).toUpperCase()}</td>
+                                    <td className="px-4 py-3 text-white font-medium text-right">{formatCurrency(entry.totalDue)}</td>
+                                    <td className="px-4 py-3 text-white font-medium text-right">{formatCurrency(entry.balanceDue)}</td>
+                                    <td className="px-4 py-3 text-slate-400">{new Date(entry.dueDate).toLocaleDateString()}</td>
+                                    <td className="px-4 py-3">
+                                        <span className={`text-xs font-medium ${getDpdColor(entry.dpd)}`}>
+                                            {entry.dpd > 0 ? `${entry.dpd} days overdue` : entry.dpd === 0 ? 'Due today' : `${Math.abs(entry.dpd)} days`}
+                                        </span>
+                                    </td>
+                                    <td className="px-4 py-3">
+                                        <span className={`text-xs px-2 py-1 rounded-full ${getAgingBadge(entry.agingBucket)}`}>
+                                            {entry.agingBucket.replace(/_/g, ' ').replace(/\b\w/g, c => c.toUpperCase())}
+                                        </span>
+                                    </td>
+                                    {canAssign && (
                                         <td className="px-4 py-3">
-                                            <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(collection.status)}`}>
-                                                {collection.status.charAt(0).toUpperCase() + collection.status.slice(1)}
-                                            </span>
+                                            <select
+                                                value={entry.collectionsOfficer || ''}
+                                                onChange={e => assignOfficer(entry.loanId, e.target.value)}
+                                                className="text-xs px-1 py-0.5 rounded border border-slate-600 bg-slate-800/50 text-slate-200"
+                                            >
+                                                <option value="">Unassigned</option>
+                                                {officers.map(o => (
+                                                    <option key={o.id} value={o.id}>{o.fullName}</option>
+                                                ))}
+                                            </select>
                                         </td>
+                                    )}
+                                    {canAssign && (
                                         <td className="px-4 py-3">
-                                            <span className={`text-xs font-medium ${daysOverdue > 30 ? 'text-red-400' : daysOverdue > 0 ? 'text-amber-400' : 'text-emerald-400'}`}>
-                                                {daysOverdue > 0 ? `${daysOverdue} days overdue` : daysOverdue < 0 ? `${Math.abs(daysOverdue)} days` : 'Due today'}
-                                            </span>
+                                            <select
+                                                value={entry.assignedCollectionsBranch || ''}
+                                                onChange={e => assignBranch(entry.loanId, e.target.value)}
+                                                className="text-xs px-1 py-0.5 rounded border border-slate-600 bg-slate-800/50 text-slate-200"
+                                            >
+                                                <option value="">Unassigned</option>
+                                                {branches.map(b => (
+                                                    <option key={b.code} value={b.code}>{b.name}</option>
+                                                ))}
+                                            </select>
                                         </td>
-                                    </tr>
-                                )
-                            })}
+                                    )}
+                                </tr>
+                            ))}
                         </tbody>
                     </table>
                 </div>

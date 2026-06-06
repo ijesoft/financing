@@ -10,8 +10,8 @@ const getHeaders = () => {
 
 export const getLoans = async (customerId?: string) => {
   const query = customerId
-    ? `query GetLoans($customerId: String!) { loans(customerId: $customerId) { loans { id principal status customerId productId borrowerName productName termMonths approvedPrincipal approvedRate createdAt updatedAt disbursedAt outstandingBalance } } }`
-    : `query GetLoans { loans { loans { id principal status customerId productId borrowerName productName termMonths approvedPrincipal approvedRate createdAt updatedAt disbursedAt outstandingBalance } } }`
+    ? `query GetLoans($customerId: String!) { loans(customerId: $customerId) { loans { id principal status customerId productId borrowerName productName termMonths approvedPrincipal approvedRate createdAt updatedAt disbursedAt outstandingBalance collectionsOfficer assignedCollectionsBranch } } }`
+    : `query GetLoans { loans { loans { id principal status customerId productId borrowerName productName termMonths approvedPrincipal approvedRate createdAt updatedAt disbursedAt outstandingBalance collectionsOfficer assignedCollectionsBranch } } }`
   
   const response = await fetch(`${API_URL}/graphql`, {
     method: 'POST',

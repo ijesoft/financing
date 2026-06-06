@@ -704,6 +704,29 @@ class LoanMutation:
                 created_by=str(current_user.id),
                 lines=gl_lines,
             )
+            try:
+                from .services.loan_accounting_service import post_loan_disbursement
+                from .services.accounting_service import post_transaction as _post_tx
+                principal_minor = int((loan_qty * Decimal(100)).to_integral_value())
+                net_minor = int((net_disbursement * Decimal(100)).to_integral_value())
+                fee_minor = int((origination_fee * Decimal(100)).to_integral_value())
+                from .database import get_async_session_local
+                bank_session_factory = get_async_session_local()
+                async with bank_session_factory() as bank_session:
+                    await post_loan_disbursement(
+                        bank_session,
+                        loan_id=loan.id,
+                        principal_minor=principal_minor,
+                        net_disbursement_minor=net_minor,
+                        origination_fee_minor=fee_minor,
+                        customer_id=str(loan.customer_id) if loan.customer_id is not None else None,
+                        branch_code=loan.branch_code,
+                        idempotency_key=f"DISB-{txn.receipt_number}",
+                        created_by=str(current_user.id),
+                        description=f"Bank-grade disbursement posting for loan {loan.id}",
+                    )
+            except Exception as bg_err:
+                print(f"Warning: bank-grade disbursement posting failed: {bg_err}")
 
             await session.commit()
 
@@ -1051,6 +1074,33 @@ class LoanMutation:
                 created_by=str(current_user.id),
                 lines=gl_lines,
             )
+            try:
+                from .services.loan_accounting_service import post_loan_repayment
+                from .database import get_async_session_local
+                bank_session_factory = get_async_session_local()
+                total_minor = int((amount * Decimal(100)).to_integral_value())
+                penalty_minor = int((total_penalty_paid * Decimal(100)).to_integral_value())
+                fee_minor = int((prepayment_penalty * Decimal(100)).to_integral_value())
+                interest_minor = int((total_interest_paid * Decimal(100)).to_integral_value())
+                principal_minor = int((total_principal_paid * Decimal(100)).to_integral_value())
+                overpay_minor = int((funds_remaining * Decimal(100)).to_integral_value())
+                async with bank_session_factory() as bank_session:
+                    await post_loan_repayment(
+                        bank_session,
+                        loan_id=loan.id,
+                        total_minor=total_minor,
+                        penalty_minor=penalty_minor,
+                        fee_minor=fee_minor,
+                        interest_minor=interest_minor,
+                        principal_minor=principal_minor,
+                        overpayment_minor=overpay_minor,
+                        customer_id=str(loan.customer_id) if loan.customer_id is not None else None,
+                        branch_code=loan.branch_code,
+                        idempotency_key=f"REPAY-{txn.receipt_number}",
+                        created_by=str(current_user.id),
+                    )
+            except Exception as bg_err:
+                print(f"Warning: bank-grade repayment posting failed: {bg_err}")
 
             await session.commit()
             msg = f"Repayment of {amount} processed. Principal: {total_principal_paid}, Interest: {total_interest_paid}"

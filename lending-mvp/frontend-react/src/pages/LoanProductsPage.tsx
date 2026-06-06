@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react'
-import { Plus, Pencil, Trash2, Eye } from 'lucide-react'
+import { Plus, Pencil, Trash2 } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
+import { formatCurrency } from '@/lib/utils'
 
 interface LoanProduct {
     id: string
@@ -30,7 +31,12 @@ export default function LoanProductsPage() {
                 })
             })
             const data = await res.json()
-            setProductsData(data.data?.loanProducts || [])
+            setProductsData((data.data?.loanProducts || []).map((p: any) => ({
+                ...p,
+                interestRate: Number(p.interestRate),
+                minLoanAmount: p.minLoanAmount ? Number(p.minLoanAmount) : undefined,
+                maxLoanAmount: p.maxLoanAmount ? Number(p.maxLoanAmount) : undefined,
+            })))
         } catch (e) {
             console.error('Failed to fetch loan products:', e)
         } finally {
@@ -91,13 +97,13 @@ export default function LoanProductsPage() {
                                 {product.minLoanAmount && (
                                     <div className="flex justify-between text-sm">
                                         <span className="text-muted-foreground">Min Amount:</span>
-                                        <span className="text-foreground font-medium">₱{product.minLoanAmount.toLocaleString()}</span>
+                                        <span className="text-foreground font-medium">{formatCurrency(product.minLoanAmount)}</span>
                                     </div>
                                 )}
                                 {product.maxLoanAmount && (
                                     <div className="flex justify-between text-sm">
                                         <span className="text-muted-foreground">Max Amount:</span>
-                                        <span className="text-foreground font-medium">₱{product.maxLoanAmount.toLocaleString()}</span>
+                                        <span className="text-foreground font-medium">{formatCurrency(product.maxLoanAmount)}</span>
                                     </div>
                                 )}
                             </div>

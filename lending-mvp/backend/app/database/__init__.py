@@ -19,7 +19,7 @@ from .pg_models import (
     Branch, UserBranchAssignment, AuditLog, UserSession, KYCDocument,
     Beneficiary, CustomerActivity, PasswordHistory, AMLAlert, PEPRecord
 )
-from .pg_accounting_models import GLAccount, JournalEntry, JournalLine
+from .pg_accounting_models import GLAccount, JournalEntry, JournalLine, TransactionIdempotency
 
 # Lazy initialization - don't create engine until it's actually needed
 _engine = None

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Eye, FileText } from 'lucide-react'
+import { Search, Plus, Eye, FileText, UserCog, X } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { getLoans } from '@/api/loans'
 import { useNavigate } from 'react-router-dom'
@@ -18,16 +18,28 @@ interface Loan {
     createdAt: string
     disbursedAt?: string
     outstandingBalance?: number
+    collectionsOfficer?: string
+    assignedCollectionsBranch?: string
 }
 
 export default function LoansPage() {
     const { user } = useAuth()
     const navigate = useNavigate()
     const canCreateLoan = user?.role === 'admin' || user?.role === 'branch_manager'
+    const canAssign = user?.role === 'admin' || user?.role === 'branch_manager'
 
     const [loading, setLoading] = useState(true)
     const [loansData, setLoansData] = useState<Loan[]>([])
     const [search, setSearch] = useState('')
+    const [officers, setOfficers] = useState<Array<{id: string, fullName: string}>>([])
+    const [branches, setBranches] = useState<Array<{code: string, name: string}>>([])
+
+    const [assignTarget, setAssignTarget] = useState<Loan | null>(null)
+    const [assignOfficerId, setAssignOfficerId] = useState('')
+    const [assignBranchCode, setAssignBranchCode] = useState('')
+
+    const officerMap = Object.fromEntries(officers.map(o => [o.id, o.fullName]))
+    const branchMap = Object.fromEntries(branches.map(b => [b.code, b.name]))
 
     const filteredLoans = loansData.filter(loan => 
         loan.borrowerName.toLowerCase().includes(search.toLowerCase()) ||
@@ -36,12 +48,72 @@ export default function LoansPage() {
         loan.status.toLowerCase().includes(search.toLowerCase())
     )
 
+    const openAssign = (loan: Loan) => {
+        setAssignTarget(loan)
+        setAssignOfficerId(loan.collectionsOfficer || '')
+        setAssignBranchCode(loan.assignedCollectionsBranch || '')
+        fetchModalData()
+    }
+
+    const fetchModalData = async () => {
+        const token = localStorage.getItem('access_token')
+        try {
+            const [officerRes, branchRes] = await Promise.all([
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({ query: `query { usersByRole(role: "collections_officer") { id fullName } }` })
+                }).then(r => r.json()),
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({ query: `query { branches { code name } }` })
+                }).then(r => r.json())
+            ])
+            setOfficers(officerRes.data?.usersByRole || [])
+            setBranches(branchRes.data?.branches || [])
+        } catch (e) {
+            console.error('Failed to fetch modal data:', e)
+        }
+    }
+
+    const saveAssign = async () => {
+        if (!assignTarget) return
+        const token = localStorage.getItem('access_token')
+        try {
+            await Promise.all([
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({
+                        query: `mutation ($loanId: ID!, $collectionsOfficerId: String) {
+                            assignLoanCollectionsOfficer(loanId: $loanId, collectionsOfficerId: $collectionsOfficerId) { success message }
+                        }`,
+                        variables: { loanId: assignTarget.id, collectionsOfficerId: assignOfficerId || null }
+                    })
+                }),
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                    body: JSON.stringify({
+                        query: `mutation ($loanId: ID!, $branchCode: String) {
+                            assignLoanCollectionsBranch(loanId: $loanId, branchCode: $branchCode) { success message }
+                        }`,
+                        variables: { loanId: assignTarget.id, branchCode: assignBranchCode || null }
+                    })
+                })
+            ])
+            setAssignTarget(null)
+            init()
+        } catch (e) {
+            console.error('Failed to assign:', e)
+        }
+    }
+
     const init = async () => {
         try {
-            const data = await getLoans()
-            // The GraphQL response for 'loans' is { data: { loans: { loans: [...] } } }
-            // Our getLoans in api/loans.ts returns the json() which is { data: { ... } }
-            setLoansData(data.data?.loans?.loans || [])
+            const loansRes = await getLoans()
+            setLoansData(loansRes.data?.loans?.loans || [])
         } catch (e) {
             console.error('Failed to fetch loans:', e)
         } finally {
@@ -98,11 +170,14 @@ export default function LoansPage() {
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Amount</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Status</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Term</th>
+                                {canAssign && (
+                                    <th className="text-left px-4 py-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider">Assignment</th>
+                                )}
                             </tr>
                         </thead>
                         <tbody>
                             {filteredLoans.length === 0 ? (
-                                <tr><td colSpan={5} className="text-center py-12 text-muted-foreground">No loans found.</td></tr>
+                                <tr><td colSpan={canAssign ? 7 : 5} className="text-center py-12 text-muted-foreground">No loans found.</td></tr>
                             ) : filteredLoans.map((loan) => (
                                 <tr 
                                     key={loan.id} 
@@ -126,10 +201,90 @@ export default function LoansPage() {
                                         </span>
                                     </td>
                                     <td className="px-4 py-3 text-muted-foreground">{loan.termMonths} months</td>
+                                    {canAssign && (
+                                        <td className="px-4 py-3" onClick={e => e.stopPropagation()}>
+                                            <div className="flex items-center gap-2">
+                                                <div className="flex-1 min-w-0">
+                                                    <div className="text-xs text-foreground truncate">
+                                                        {loan.collectionsOfficer ? officerMap[loan.collectionsOfficer] || loan.collectionsOfficer : '—'}
+                                                    </div>
+                                                    <div className="text-xs text-muted-foreground truncate">
+                                                        {loan.assignedCollectionsBranch ? branchMap[loan.assignedCollectionsBranch] || loan.assignedCollectionsBranch : '—'}
+                                                    </div>
+                                                </div>
+                                                <button
+                                                    onClick={() => openAssign(loan)}
+                                                    className="p-1.5 rounded-lg hover:bg-white/10 text-muted-foreground hover:text-foreground transition-colors"
+                                                    title="Assign officer &amp; branch"
+                                                >
+                                                    <UserCog className="w-4 h-4" />
+                                                </button>
+                                            </div>
+                                        </td>
+                                    )}
                                 </tr>
                             ))}
                         </tbody>
                     </table>
+                </div>
+            )}
+
+            {assignTarget && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm" onClick={() => setAssignTarget(null)}>
+                    <div className="glass rounded-xl p-6 w-full max-w-md border border-border/50 shadow-2xl" onClick={e => e.stopPropagation()}>
+                        <div className="flex items-center justify-between mb-4">
+                            <h2 className="text-lg font-bold text-foreground">Assign Collections</h2>
+                            <button onClick={() => setAssignTarget(null)} className="p-1 rounded-lg hover:bg-white/10 text-muted-foreground transition-colors">
+                                <X className="w-5 h-5" />
+                            </button>
+                        </div>
+                        <div className="space-y-3 mb-2 text-sm text-muted-foreground">
+                            <p>Loan: <span className="text-foreground font-medium">{assignTarget.id}</span></p>
+                            <p>Borrower: <span className="text-foreground font-medium">{assignTarget.borrowerName}</span></p>
+                        </div>
+                        <div className="space-y-4">
+                            <div>
+                                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Collections Officer</label>
+                                <select
+                                    value={assignOfficerId}
+                                    onChange={e => setAssignOfficerId(e.target.value)}
+                                    className="w-full px-3 py-2 rounded-lg border border-border bg-background/50 text-foreground text-sm focus:outline-none focus:border-primary/50"
+                                >
+                                    <option value="">Unassigned</option>
+                                    {officers.map(o => (
+                                        <option key={o.id} value={o.id}>{o.fullName}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div>
+                                <label className="block text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-1.5">Branch / Area</label>
+                                <select
+                                    value={assignBranchCode}
+                                    onChange={e => setAssignBranchCode(e.target.value)}
+                                    className="w-full px-3 py-2 rounded-lg border border-border bg-background/50 text-foreground text-sm focus:outline-none focus:border-primary/50"
+                                >
+                                    <option value="">Unassigned</option>
+                                    {branches.map(b => (
+                                        <option key={b.code} value={b.code}>{b.name}</option>
+                                    ))}
+                                </select>
+                            </div>
+                            <div className="flex gap-2 justify-end pt-2">
+                                <button
+                                    onClick={() => setAssignTarget(null)}
+                                    className="px-4 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-white/5 transition-colors"
+                                >
+                                    Cancel
+                                </button>
+                                <button
+                                    onClick={saveAssign}
+                                    className="px-4 py-2 rounded-lg gradient-primary text-white text-sm font-medium shadow-lg hover:opacity-90 transition-opacity"
+                                >
+                                    Save
+                                </button>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             )}
         </div>

@@ -10,7 +10,7 @@ import pytest_asyncio
 import asyncio
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession
 from sqlalchemy.orm import sessionmaker
-from sqlalchemy.pool import StaticPool
+from sqlalchemy.pool import NullPool
 from sqlalchemy import text
 from decimal import Decimal
 
@@ -44,20 +44,140 @@ async def db_engine():
     engine = create_async_engine(
         TEST_DATABASE_URL,
         echo=False,
-        poolclass=StaticPool,
+        poolclass=NullPool,
     )
 
     # Create all tables
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
 
+    async with engine.begin() as conn:
+        for stmt in [
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS value_date DATE",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS branch_id BIGINT",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS branch_code VARCHAR(20)",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS idempotency_key VARCHAR(64)",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS loan_id BIGINT",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS customer_id VARCHAR(64)",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS prev_hash VARCHAR(64)",
+            "ALTER TABLE journal_entries ADD COLUMN IF NOT EXISTS row_hash VARCHAR(64) NOT NULL DEFAULT ''",
+            "CREATE UNIQUE INDEX IF NOT EXISTS ix_journal_entries_idem ON journal_entries (idempotency_key) WHERE idempotency_key IS NOT NULL",
+            "CREATE INDEX IF NOT EXISTS ix_journal_entries_loan ON journal_entries (loan_id)",
+            "CREATE INDEX IF NOT EXISTS ix_journal_entries_branch ON journal_entries (branch_code)",
+            "CREATE INDEX IF NOT EXISTS ix_journal_entries_value_date ON journal_entries (value_date)",
+            "ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS is_npl BOOLEAN NOT NULL DEFAULT FALSE",
+            "ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS non_accrual_since TIMESTAMPTZ",
+            "ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS collections_officer VARCHAR(64)",
+            "ALTER TABLE loan_applications ADD COLUMN IF NOT EXISTS ecl_stage VARCHAR(10) DEFAULT 'S1'",
+            "CREATE INDEX IF NOT EXISTS ix_loan_applications_npl ON loan_applications (is_npl) WHERE is_npl = TRUE",
+            "CREATE INDEX IF NOT EXISTS ix_loan_applications_branch_status ON loan_applications (branch_code, status)",
+            "CREATE INDEX IF NOT EXISTS ix_amort_sched_loan_due ON amortization_schedules (loan_id, due_date)",
+            "CREATE INDEX IF NOT EXISTS ix_amort_sched_unpaid ON amortization_schedules (loan_id, due_date) WHERE status IN ('pending', 'partial', 'overdue')",
+            "CREATE EXTENSION IF NOT EXISTS pgcrypto",
+        ]:
+            await conn.execute(text(stmt))
+
+        await conn.execute(text("""
+            CREATE OR REPLACE FUNCTION deny_journal_mutations()
+            RETURNS trigger AS $$
+            BEGIN
+                IF TG_OP = 'UPDATE'
+                   AND TG_TABLE_NAME = 'journal_entries'
+                   AND OLD.row_hash = ''
+                   AND NEW.row_hash <> ''
+                   AND NEW.reference_no = OLD.reference_no
+                   AND NEW.description IS NOT DISTINCT FROM OLD.description
+                   AND NEW.created_by IS NOT DISTINCT FROM OLD.created_by
+                   AND NEW.value_date IS NOT DISTINCT FROM OLD.value_date
+                   AND NEW.branch_id IS NOT DISTINCT FROM OLD.branch_id
+                   AND NEW.branch_code IS NOT DISTINCT FROM OLD.branch_code
+                   AND NEW.idempotency_key IS NOT DISTINCT FROM OLD.idempotency_key
+                   AND NEW.loan_id IS NOT DISTINCT FROM OLD.loan_id
+                   AND NEW.customer_id IS NOT DISTINCT FROM OLD.customer_id
+                   AND NEW.prev_hash IS NOT DISTINCT FROM OLD.prev_hash
+                THEN
+                    RETURN NEW;
+                END IF;
+                RAISE EXCEPTION 'journal_entries and journal_lines are append-only. Use compensating entries for corrections.';
+            END;
+            $$ LANGUAGE plpgsql;
+        """))
+        await conn.execute(text("""
+            CREATE OR REPLACE FUNCTION check_journal_balanced()
+            RETURNS trigger AS $$
+            DECLARE
+                total_dr NUMERIC;
+                total_cr NUMERIC;
+            BEGIN
+                SELECT COALESCE(SUM(debit), 0), COALESCE(SUM(credit), 0)
+                INTO total_dr, total_cr
+                FROM journal_lines
+                WHERE entry_id = NEW.entry_id;
+                IF total_dr <> total_cr THEN
+                    RAISE EXCEPTION 'Journal entry % unbalanced: Dr=% Cr=%', NEW.entry_id, total_dr, total_cr;
+                END IF;
+                IF total_dr = 0 THEN
+                    RAISE EXCEPTION 'Journal entry % is empty', NEW.entry_id;
+                END IF;
+                RETURN NULL;
+            END;
+            $$ LANGUAGE plpgsql;
+        """))
+        await conn.execute(text("""
+            CREATE OR REPLACE FUNCTION verify_journal_hash_chain()
+            RETURNS TABLE(entry_id BIGINT, valid BOOLEAN, computed_hash VARCHAR) AS $$
+            DECLARE
+                rec RECORD;
+                prev VARCHAR(64) := '';
+                expected VARCHAR(64);
+                payload JSON;
+            BEGIN
+                FOR rec IN
+                    SELECT je.id, je.prev_hash, je.row_hash, je.timestamp,
+                           COALESCE(json_agg(json_build_object(
+                               'account_code', jl.account_code,
+                               'debit_minor', (jl.debit * 100)::bigint,
+                               'credit_minor', (jl.credit * 100)::bigint
+                           ) ORDER BY jl.account_code) FILTER (WHERE jl.id IS NOT NULL), '[]'::json) AS lines_json
+                    FROM journal_entries je
+                    LEFT JOIN journal_lines jl ON jl.entry_id = je.id
+                    GROUP BY je.id, je.prev_hash, je.row_hash, je.timestamp
+                    ORDER BY je.id ASC
+                LOOP
+                    payload := json_build_object(
+                        'entry_id', rec.id,
+                        'ts', rec.timestamp,
+                        'lines', rec.lines_json
+                    );
+                    expected := encode(digest(prev || payload::text, 'sha256'), 'hex');
+                    entry_id := rec.id;
+                    computed_hash := expected;
+                    valid := (expected = rec.row_hash) AND (COALESCE(rec.prev_hash, '') = prev);
+                    RETURN NEXT;
+                    prev := rec.row_hash;
+                END LOOP;
+            END;
+            $$ LANGUAGE plpgsql;
+        """))
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_journal_entries_no_update ON journal_entries"))
+        await conn.execute(text("CREATE TRIGGER trg_journal_entries_no_update BEFORE UPDATE OR DELETE ON journal_entries FOR EACH ROW EXECUTE FUNCTION deny_journal_mutations()"))
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_journal_lines_no_update ON journal_lines"))
+        await conn.execute(text("CREATE TRIGGER trg_journal_lines_no_update BEFORE UPDATE OR DELETE ON journal_lines FOR EACH ROW EXECUTE FUNCTION deny_journal_mutations()"))
+        await conn.execute(text("DROP TRIGGER IF EXISTS trg_journal_lines_balanced ON journal_lines"))
+        await conn.execute(text("CREATE CONSTRAINT TRIGGER trg_journal_lines_balanced AFTER INSERT ON journal_lines DEFERRABLE INITIALLY DEFERRED FOR EACH ROW EXECUTE FUNCTION check_journal_balanced()"))
+
     yield engine
 
-    # Drop all tables after tests
-    async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.drop_all)
+    try:
+        async with engine.begin() as conn:
+            await conn.run_sync(Base.metadata.drop_all)
+    except RuntimeError:
+        pass
 
-    await engine.dispose()
+    try:
+        await engine.dispose()
+    except RuntimeError:
+        pass
 
 
 @pytest_asyncio.fixture(scope="function")

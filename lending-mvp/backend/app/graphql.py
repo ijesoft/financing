@@ -19,7 +19,6 @@ from .database.pg_core_models import (
     User,
     Customer,
     SavingsAccount,
-    Loan,
     SavingsTransaction,
 )
 from .database.pg_loan_models import (
@@ -34,6 +33,16 @@ from .chart_of_accounts import (
     JournalEntryResponse,
     GLAccountCreateInput,
     GLAccountResponse,
+)
+from .graphql_collections_schema import (
+    CollectionsDueReport as CollectionsDueReportType,
+    CollectionsDueSummary as CollectionsDueSummaryType,
+    AgingReport as AgingReportType,
+)
+from .graphql_collections_resolvers import (
+    resolve_collections_due,
+    resolve_collections_due_summary,
+    resolve_aging_report,
 )
 from .database.pg_models import (
     CustomerActivity,
@@ -344,6 +353,8 @@ class LoanNode:
     approvedPrincipal: Optional[Decimal] = None
     approvedRate: Optional[Decimal] = None
     outstandingBalance: Optional[Decimal] = None
+    collectionsOfficer: Optional[str] = None
+    assignedCollectionsBranch: Optional[str] = None
     createdAt: datetime = strawberry.field(default_factory=datetime.now)
     updatedAt: datetime = strawberry.field(default_factory=datetime.now)
     disbursedAt: Optional[datetime] = None
@@ -770,6 +781,36 @@ class Query:
         return Health(status="ok", message="Lending MVP GraphQL API is running")
 
     @strawberry.field
+    async def users_by_role(
+        self,
+        info: Info,
+        role: str,
+    ) -> List[UserNode]:
+        from .auth.rbac import require_any_staff
+        from .database.pg_core_models import User
+
+        require_any_staff(info)
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            result = await session.execute(
+                select(User).where(User.role == role, User.is_active == True)
+            )
+            users = result.scalars().all()
+            return [
+                UserNode(
+                    id=strawberry.ID(str(u.id)),
+                    email=u.email or "",
+                    username=u.username or "",
+                    fullName=u.full_name or "",
+                    isActive=u.is_active,
+                    role=u.role,
+                    branchId=u.branch_id,
+                    branchCode=u.branch_code,
+                )
+                for u in users
+            ]
+
+    @strawberry.field
     async def branches(self) -> List[BranchNode]:
         session_factory = get_async_session_local()
         async with session_factory() as session:
@@ -913,6 +954,8 @@ class Query:
                         approvedPrincipal=l.approved_principal,
                         approvedRate=l.approved_rate,
                         outstandingBalance=l.outstanding_balance,
+                        collectionsOfficer=l.collections_officer,
+                        assignedCollectionsBranch=l.assigned_collections_branch,
                         createdAt=l.created_at,
                         updatedAt=l.updated_at,
                         disbursedAt=l.disbursed_at,
@@ -1394,6 +1437,38 @@ class Query:
     @strawberry.field
     async def llrMetrics(self) -> FinancialMetricsNode:
         return FinancialMetricsNode()
+
+    @strawberry.field
+    async def collections_due(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+        collectionsOfficerId: Optional[str] = None,
+        dueDateFrom: Optional[date] = None,
+        dueDateTo: Optional[date] = None,
+        limit: int = 500,
+        offset: int = 0,
+    ) -> CollectionsDueReportType:
+        return await resolve_collections_due(info, asOf, branchCode, collectionsOfficerId, dueDateFrom, dueDateTo, limit, offset)
+
+    @strawberry.field
+    async def collections_due_summary(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+    ) -> CollectionsDueSummaryType:
+        return await resolve_collections_due_summary(info, asOf, branchCode)
+
+    @strawberry.field
+    async def aging_report(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+    ) -> AgingReportType:
+        return await resolve_aging_report(info, asOf, branchCode)
 
     @strawberry.field
     async def incomeStatement(self, year: int, month: int) -> FinancialStatementNode:
@@ -3008,6 +3083,52 @@ class Mutation:
             except Exception as e:
                 await session.rollback()
                 return SavingsTransactionResponse(success=False, message=f"Error: {str(e)}")
+
+    @strawberry.mutation
+    async def assign_loan_collections_officer(
+        self,
+        info: Info,
+        loanId: strawberry.ID,
+        collectionsOfficerId: Optional[str] = None,
+    ) -> MutationResponse:
+        from .auth.rbac import require_approval_role
+
+        user = require_approval_role(info)
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            try:
+                loan = await session.get(LoanApplication, int(str(loanId)))
+                if not loan:
+                    return MutationResponse(success=False, message="Loan not found")
+                loan.collections_officer = collectionsOfficerId
+                await session.commit()
+                return MutationResponse(success=True, message="Collections officer assigned")
+            except Exception as e:
+                await session.rollback()
+                return MutationResponse(success=False, message=str(e))
+
+    @strawberry.mutation
+    async def assign_loan_collections_branch(
+        self,
+        info: Info,
+        loanId: strawberry.ID,
+        branchCode: Optional[str] = None,
+    ) -> MutationResponse:
+        from .auth.rbac import require_approval_role
+
+        user = require_approval_role(info)
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            try:
+                loan = await session.get(LoanApplication, int(str(loanId)))
+                if not loan:
+                    return MutationResponse(success=False, message="Loan not found")
+                loan.assigned_collections_branch = branchCode
+                await session.commit()
+                return MutationResponse(success=True, message="Collections branch assigned")
+            except Exception as e:
+                await session.rollback()
+                return MutationResponse(success=False, message=str(e))
 
     @strawberry.mutation
     async def createGLAccount(
