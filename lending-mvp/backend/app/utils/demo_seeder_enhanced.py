@@ -703,6 +703,8 @@ DEMO_USERS = [
     {"email": "branch_manager@lending.demo", "username": "branch_manager", "full_name": "Juan Dela Cruz", "role": "branch_manager", "password": "BranchMgr@123", "branch_code": "BR-QC"},
     {"email": "branch_manager_cdo@lending.demo", "username": "branch_manager_cdo", "full_name": "Carlo Mendoza", "role": "branch_manager", "password": "BranchMgr@123", "branch_code": "BR-CDO"},
     {"email": "auditor@lending.demo", "username": "auditor", "full_name": "Ana Reyes", "role": "auditor", "password": "Auditor@123Demo", "branch_code": "HQ"},
+    {"email": "collections1@lending.demo", "username": "collections_officer_1", "full_name": "Ramon Villar", "role": "collections_officer", "password": "Collections@123", "branch_code": "BR-QC"},
+    {"email": "collections2@lending.demo", "username": "collections_officer_2", "full_name": "Luzviminda Cruz", "role": "collections_officer", "password": "Collections@123", "branch_code": "BR-CDO"},
 ]
 
 DEMO_LOAN_PRODUCTS = [

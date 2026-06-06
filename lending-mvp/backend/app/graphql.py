@@ -39,6 +39,11 @@ from .graphql_collections_schema import (
     CollectionsDueSummary as CollectionsDueSummaryType,
     AgingReport as AgingReportType,
 )
+from .loan_product import (
+    LoanProductType,
+    LoanProductCreateInput,
+    LoanProductUpdateInput,
+)
 from .graphql_collections_resolvers import (
     resolve_collections_due,
     resolve_collections_due_summary,
@@ -1659,6 +1664,47 @@ class Mutation:
     @strawberry.mutation
     async def create_dummy(self) -> MutationResponse:
         return MutationResponse(success=True, message="Placeholder")
+
+    @strawberry.mutation
+    async def create_loan_product(self, info: Info, input: LoanProductCreateInput) -> MutationResponse:
+        current_user = info.context.get("current_user")
+        if not current_user or current_user.role not in ("admin", "branch_manager"):
+            return MutationResponse(success=False, message="Not authorized")
+
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            try:
+                existing = await session.execute(
+                    select(PGLoanProduct).where(PGLoanProduct.product_code == input.product_code)
+                )
+                if existing.scalar_one_or_none():
+                    return MutationResponse(success=False, message="Loan product code already exists")
+
+                new_prod = PGLoanProduct(
+                    product_code=input.product_code,
+                    name=input.name,
+                    description=input.description,
+                    amortization_type=input.amortization_type,
+                    repayment_frequency=input.repayment_frequency,
+                    interest_rate=input.interest_rate,
+                    penalty_rate=input.penalty_rate,
+                    grace_period_months=input.grace_period_months,
+                    is_active=input.is_active,
+                    principal_only_grace=input.principal_only_grace,
+                    full_grace=input.full_grace,
+                    origination_fee_rate=input.origination_fee_rate,
+                    origination_fee_type=input.origination_fee_type,
+                    prepayment_allowed=input.prepayment_allowed,
+                    prepayment_penalty_rate=input.prepayment_penalty_rate,
+                    customer_loan_limit=input.customer_loan_limit,
+                )
+                session.add(new_prod)
+                await session.commit()
+                await session.refresh(new_prod)
+                return MutationResponse(success=True, message="Loan product created")
+            except Exception as e:
+                await session.rollback()
+                return MutationResponse(success=False, message=str(e))
 
     @strawberry.mutation
     async def create_branch(self, info: Info, input: BranchInput) -> BranchResponse:

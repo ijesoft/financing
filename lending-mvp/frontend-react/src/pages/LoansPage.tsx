@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react'
-import { Search, Plus, Eye, FileText, UserCog, X } from 'lucide-react'
+import { Search, Plus, UserCog, X } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { getLoans } from '@/api/loans'
 import { useNavigate } from 'react-router-dom'
@@ -37,6 +37,7 @@ export default function LoansPage() {
     const [assignTarget, setAssignTarget] = useState<Loan | null>(null)
     const [assignOfficerId, setAssignOfficerId] = useState('')
     const [assignBranchCode, setAssignBranchCode] = useState('')
+    const [saving, setSaving] = useState(false)
 
     const officerMap = Object.fromEntries(officers.map(o => [o.id, o.fullName]))
     const branchMap = Object.fromEntries(branches.map(b => [b.code, b.name]))
@@ -50,28 +51,31 @@ export default function LoansPage() {
 
     const openAssign = (loan: Loan) => {
         setAssignTarget(loan)
-        setAssignOfficerId(loan.collectionsOfficer || '')
         setAssignBranchCode(loan.assignedCollectionsBranch || '')
-        fetchModalData()
+        fetchModalData().then(() => {
+            setAssignOfficerId(loan.collectionsOfficer || '')
+        })
     }
 
     const fetchModalData = async () => {
         const token = localStorage.getItem('access_token')
         try {
-            const [officerRes, branchRes] = await Promise.all([
-                fetch('/graphql', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-                    body: JSON.stringify({ query: `query { usersByRole(role: "collections_officer") { id fullName } }` })
-                }).then(r => r.json()),
-                fetch('/graphql', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-                    body: JSON.stringify({ query: `query { branches { code name } }` })
-                }).then(r => r.json())
-            ])
-            setOfficers(officerRes.data?.usersByRole || [])
-            setBranches(branchRes.data?.branches || [])
+            const officerRes = await fetch('/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                body: JSON.stringify({ query: `query { usersByRole(role: "collections_officer") { id fullName } }` })
+            })
+            const officerData = await officerRes.json()
+            
+            const branchRes = await fetch('/graphql', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
+                body: JSON.stringify({ query: `query { branches { code name } }` })
+            })
+            const branchData = await branchRes.json()
+            
+            setOfficers(officerData.data?.usersByRole || [])
+            setBranches(branchData.data?.branches || [])
         } catch (e) {
             console.error('Failed to fetch modal data:', e)
         }
@@ -79,9 +83,10 @@ export default function LoansPage() {
 
     const saveAssign = async () => {
         if (!assignTarget) return
+        setSaving(true)
         const token = localStorage.getItem('access_token')
         try {
-            await Promise.all([
+            const [officerRes, branchRes] = await Promise.all([
                 fetch('/graphql', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
@@ -91,7 +96,7 @@ export default function LoansPage() {
                         }`,
                         variables: { loanId: assignTarget.id, collectionsOfficerId: assignOfficerId || null }
                     })
-                }),
+                }).then(r => r.json()),
                 fetch('/graphql', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
@@ -101,12 +106,22 @@ export default function LoansPage() {
                         }`,
                         variables: { loanId: assignTarget.id, branchCode: assignBranchCode || null }
                     })
-                })
+                }).then(r => r.json())
             ])
+            if (officerRes.data?.assignLoanCollectionsOfficer?.success === false) {
+                console.error('Failed to assign officer:', officerRes.data.assignLoanCollectionsOfficer.message)
+                return
+            }
+            if (branchRes.data?.assignLoanCollectionsBranch?.success === false) {
+                console.error('Failed to assign branch:', branchRes.data.assignLoanCollectionsBranch.message)
+                return
+            }
             setAssignTarget(null)
-            init()
+            await init()
         } catch (e) {
             console.error('Failed to assign:', e)
+        } finally {
+            setSaving(false)
         }
     }
 
@@ -121,7 +136,10 @@ export default function LoansPage() {
         }
     }
 
-    useEffect(() => { init() }, [])
+    useEffect(() => {
+        init()
+        fetchModalData()
+    }, [])
 
     const getStatusColor = (status: string) => {
         const colors: { [key: string]: string } = {
@@ -272,15 +290,17 @@ export default function LoansPage() {
                             <div className="flex gap-2 justify-end pt-2">
                                 <button
                                     onClick={() => setAssignTarget(null)}
-                                    className="px-4 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-white/5 transition-colors"
+                                    disabled={saving}
+                                    className="px-4 py-2 rounded-lg border border-border text-sm text-muted-foreground hover:bg-white/5 transition-colors disabled:opacity-50"
                                 >
                                     Cancel
                                 </button>
                                 <button
                                     onClick={saveAssign}
-                                    className="px-4 py-2 rounded-lg gradient-primary text-white text-sm font-medium shadow-lg hover:opacity-90 transition-opacity"
+                                    disabled={saving}
+                                    className="px-4 py-2 rounded-lg gradient-primary text-white text-sm font-medium shadow-lg hover:opacity-90 transition-opacity disabled:opacity-50"
                                 >
-                                    Save
+                                    {saving ? 'Saving...' : 'Save'}
                                 </button>
                             </div>
                         </div>
