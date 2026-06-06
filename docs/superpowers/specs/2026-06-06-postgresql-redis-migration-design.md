@@ -42,7 +42,7 @@
 | `loan_transactions` | `LoanTransaction` | FK to `Loan`, `payment_date` as `date` |
 | `loan_products` | `LoanProduct` | interest rate as `decimal` |
 | `ledger_entries` | `LedgerEntry` | `amount` as `decimal(16,2)`, `entry_type` as enum |
-| savings (implied) | `Savings` | FK to `Customer` |
+| savings (implied) | `SavingsTransaction` | FK to `Customer`, per-transaction records |
 
 ### Key Decisions
 
@@ -69,7 +69,7 @@ enum EntryType { DEBIT; CREDIT }
 enum LoanStatus { PENDING; ACTIVE; PAID_OFF; DEFAULTED }
 enum TransactionType { PRINCIPAL; INTEREST; PENALTY; FEE }
 enum CustomerType { INDIVIDUAL; CORPORATE; GOVERNMENT }
-enum SavingsTransactionType { DEPOSIT; WITHDRAWAL }
+enum SavingsTxType { DEPOSIT; WITHDRAWAL }
 
 model User {
   id              String   @id @default(uuid())
@@ -117,7 +117,7 @@ model Customer {
 
   branch            Branch   @relation(fields: [branch_id], references: [id])
   loans             Loan[]
-  savings           Savings[]
+  savings_tx        SavingsTransaction[]
 }
 
 model LoanProduct {
@@ -154,7 +154,7 @@ model LoanTransaction {
   id             String          @id @default(uuid())
   loan_id        String
   amount         Decimal         @db.Decimal(16, 2)
-  payment_date   DateTime @db.Date
+  payment_date   DateTime @db.Date // date only, no time component
   transaction_type TransactionType
   notes          String?
   created_at     DateTime        @default(now())
@@ -177,11 +177,11 @@ model LedgerEntry {
   @@index([timestamp])
 }
 
-model Savings {
+model SavingsTransaction {
   id             String   @id @default(uuid())
   customer_id    String
   amount         Decimal  @db.Decimal(16, 2)
-  transaction_type SavingsTransactionType // "deposit" or "withdrawal"
+  transaction_type SavingsTxType // "deposit" or "withdrawal"
   description    String?
   created_at     DateTime @default(now())
 
@@ -308,7 +308,7 @@ backend/app/
 
 - **DB errors**: Prisma's `UniqueViolation` → HTTP 409, `RecordNotFound` → HTTP 404
 - **FK violations**: e.g., deleting a customer with active loans → HTTP 409 with message "Cannot delete: customer has active loans"
-- **Redis errors**: fail open — serve uncached data if Redis is down
+- **Redis errors**: fail open — serve uncached data if Redis is down. If Redis is down during a mutation's cache invalidation, the mutation still succeeds (DB write is not affected), but stale cached data may exist until TTL expires. This is acceptable — data eventually becomes consistent.
 - **Startup checks**:
   - PostgreSQL: required. App fails to start if unreachable.
   - Redis: optional at boot. If unreachable on startup, app starts with caching disabled and logs a warning. If Redis goes down during runtime, queries continue uncached (fail-open).
@@ -324,6 +324,8 @@ backend/app/
 None required — fresh start with empty database.
 
 Seed data loaded via Prisma seed script on first run:
-- **Default admin user**: username `admin`, password `admin123456`, role `ADMIN`
+- **Default admin user**: username `admin`, password `admin123456`, role `ADMIN` (should change on first login)
 - **Branches**: at least one default branch (e.g., "Main Branch")
 - **Loan products**: no defaults — created through the UI
+
+Rollback: since this is a fresh start with no production data, rollback is `prisma migrate reset` which drops and recreates all tables. No backup needed.
