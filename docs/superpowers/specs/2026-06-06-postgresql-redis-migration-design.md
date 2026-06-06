@@ -67,19 +67,19 @@ datasource db {
 enum Role { ADMIN; TELLER; BORROWER }
 enum EntryType { DEBIT; CREDIT }
 enum LoanStatus { PENDING; ACTIVE; PAID_OFF; DEFAULTED }
+enum TransactionType { PRINCIPAL; INTEREST; PENALTY; FEE }
+enum CustomerType { INDIVIDUAL; CORPORATE; GOVERNMENT }
 
 model User {
-  id           String   @id @default(uuid())
-  email        String   @unique
-  username     String   @unique
-  full_name    String
-  role         Role
+  id              String   @id @default(uuid())
+  email           String   @unique
+  username        String   @unique
+  full_name       String
+  role            Role
   hashed_password String
-  is_active    Boolean  @default(true)
-  created_at   DateTime @default(now())
-  updated_at   DateTime @updatedAt
-
-  customers    Customer[]
+  is_active       Boolean  @default(true)
+  created_at      DateTime @default(now())
+  updated_at      DateTime @updatedAt
 }
 
 model Branch {
@@ -93,7 +93,7 @@ model Branch {
 
 model Customer {
   id                String   @id @default(uuid())
-  customer_type     String
+  customer_type     CustomerType
   last_name         String?
   first_name        String?
   display_name      String   @unique
@@ -144,37 +144,49 @@ model Loan {
   customer        Customer     @relation(fields: [customer_id], references: [id])
   loan_product    LoanProduct  @relation(fields: [loan_product_id], references: [id])
   transactions    LoanTransaction[]
+
+  @@index([customer_id])
+  @@index([status])
 }
 
 model LoanTransaction {
-  id          String   @id @default(uuid())
-  loan_id     String
-  amount      Decimal  @db.Decimal(16, 2)
-  payment_date DateTime
-  transaction_type String // e.g., "principal", "interest", "penalty"
-  notes       String?
-  created_at  DateTime @default(now())
+  id             String          @id @default(uuid())
+  loan_id        String
+  amount         Decimal         @db.Decimal(16, 2)
+  payment_date   DateTime
+  transaction_type TransactionType
+  notes          String?
+  created_at     DateTime        @default(now())
 
-  loan        Loan     @relation(fields: [loan_id], references: [id])
+  loan           Loan            @relation(fields: [loan_id], references: [id])
+
+  @@index([loan_id])
+  @@index([payment_date])
 }
 
 model LedgerEntry {
   id             String    @id @default(uuid())
-  transaction_id String
+  reference_id   String    // reference to originating event (e.g., LoanTransaction.id) — not a FK, ledger is append-only
   account        String
   amount         Decimal   @db.Decimal(16, 2)
   entry_type     EntryType
   timestamp      DateTime  @default(now())
+
+  @@index([account])
+  @@index([timestamp])
 }
 
 model Savings {
-  id          String   @id @default(uuid())
-  customer_id String
-  amount      Decimal  @db.Decimal(16, 2)
-  created_at  DateTime @default(now())
-  updated_at  DateTime @updatedAt
+  id             String   @id @default(uuid())
+  customer_id    String
+  amount         Decimal  @db.Decimal(16, 2)
+  transaction_type String // "deposit" or "withdrawal" — individual savings transactions
+  description    String?
+  created_at     DateTime @default(now())
 
-  customer    Customer @relation(fields: [customer_id], references: [id])
+  customer     Customer @relation(fields: [customer_id], references: [id])
+
+  @@index([customer_id])
 }
 ```
 
@@ -201,14 +213,30 @@ async def get_customers(info):
 
   ```python
   INVALIDATION_MAP = {
+      # User mutations
+      "login":          [],
+      "createUser":     ["users", "dashboard"],
+      # Customer mutations
+      "createCustomer": ["customers", "dashboard"],
+      "updateCustomer": ["customers", "dashboard"],
+      "deleteCustomer": ["customers", "loans", "savings", "dashboard"],
+      # Loan mutations
       "createLoan":     ["loans", "dashboard"],
       "updateLoan":     ["loans", "dashboard"],
-      "deleteLoan":     ["loans", "dashboard"],
-      "createCustomer": ["customers", "dashboard"],
       "disburseLoan":   ["loans", "ledger", "dashboard"],
-      # ... etc
+      # Loan transaction mutations
+      "createLoanTransaction": ["loan_transactions", "loans", "ledger", "dashboard"],
+      # Loan product mutations
+      "createLoanProduct": ["loan_products"],
+      "updateLoanProduct": ["loan_products"],
+      # Savings mutations
+      "createSavings":  ["savings", "dashboard"],
+      # Journal/Ledger mutations
+      "createJournalEntry": ["ledger"],
   }
   ```
+
+  Auto-registration convention: any mutation not in this map defaults to invalidating `["dashboard"]` (safe fallback — dashboard aggregates everything).
 
   Each cached query declares which entity tags it belongs to (e.g., `get_loans` → `["loans"]`). When a mutation fires, all cache keys tagged with those entities are evicted.
 
@@ -276,4 +304,9 @@ backend/app/
 
 ## Data Migration
 
-None required — fresh start with empty database. Seed data for `LoanProduct`, `Branch`, and default `User` roles will be loaded via Prisma seed script on first run.
+None required — fresh start with empty database.
+
+Seed data loaded via Prisma seed script on first run:
+- **Default admin user**: username `admin`, password `admin123456`, role `ADMIN`
+- **Branches**: at least one default branch (e.g., "Main Branch")
+- **Loan products**: no defaults — created through the UI
