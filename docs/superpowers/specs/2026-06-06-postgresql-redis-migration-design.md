@@ -69,6 +69,7 @@ enum EntryType { DEBIT; CREDIT }
 enum LoanStatus { PENDING; ACTIVE; PAID_OFF; DEFAULTED }
 enum TransactionType { PRINCIPAL; INTEREST; PENALTY; FEE }
 enum CustomerType { INDIVIDUAL; CORPORATE; GOVERNMENT }
+enum SavingsTransactionType { DEPOSIT; WITHDRAWAL }
 
 model User {
   id              String   @id @default(uuid())
@@ -153,7 +154,7 @@ model LoanTransaction {
   id             String          @id @default(uuid())
   loan_id        String
   amount         Decimal         @db.Decimal(16, 2)
-  payment_date   DateTime
+  payment_date   DateTime @db.Date
   transaction_type TransactionType
   notes          String?
   created_at     DateTime        @default(now())
@@ -180,7 +181,7 @@ model Savings {
   id             String   @id @default(uuid())
   customer_id    String
   amount         Decimal  @db.Decimal(16, 2)
-  transaction_type String // "deposit" or "withdrawal" — individual savings transactions
+  transaction_type SavingsTransactionType // "deposit" or "withdrawal"
   description    String?
   created_at     DateTime @default(now())
 
@@ -238,6 +239,20 @@ async def get_customers(info):
 
   Auto-registration convention: any mutation not in this map defaults to invalidating `["dashboard"]` (safe fallback — dashboard aggregates everything).
 
+  Query→tag registration via decorator parameter:
+
+  ```python
+  @cache(ttl=60, tags=["customers", "dashboard"])
+  async def get_customers(info):
+      ...
+
+  @cache(ttl=300, tags=["dashboard"])
+  async def get_dashboard_stats(info):
+      ...
+  ```
+
+  When a mutation invalidates `["loans"]`, all cache keys tagged with `"loans"` are evicted.
+
   Each cached query declares which entity tags it belongs to (e.g., `get_loans` → `["loans"]`). When a mutation fires, all cache keys tagged with those entities are evicted.
 
 - **Connection pool**: shared Redis connection via `redis.asyncio.from_url`
@@ -262,6 +277,7 @@ backend/app/
 │   ├── loan_product_crud.py
 │   ├── loan_transaction_crud.py
 │   ├── savings_crud.py
+│   ├── ledger_crud.py
 │   └── transaction_crud.py
 │
 ├── cache/                     # ← NEW
@@ -291,6 +307,7 @@ backend/app/
 ## Error Handling
 
 - **DB errors**: Prisma's `UniqueViolation` → HTTP 409, `RecordNotFound` → HTTP 404
+- **FK violations**: e.g., deleting a customer with active loans → HTTP 409 with message "Cannot delete: customer has active loans"
 - **Redis errors**: fail open — serve uncached data if Redis is down
 - **Startup checks**:
   - PostgreSQL: required. App fails to start if unreachable.
