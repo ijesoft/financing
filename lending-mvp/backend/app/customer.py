@@ -161,8 +161,19 @@ class CustomersResponse:
 @strawberry.type
 class Query:
     @strawberry.field
-    async def customer(self, info: Info) -> Optional["CustomerType"]:
-        customer_crud = CustomerCRUD(AsyncSessionLocal())
+    async def customers(
+        self,
+        info: Info,
+        skip: int = 0,
+        limit: int = 100,
+        search_term: Optional[str] = None,
+    ) -> CustomersResponse:
+        current_user: UserInDB = info.context.get("current_user")
+        if not current_user:
+            return CustomersResponse(success=False, message="Not authenticated", customers=[], total=0)
+        try:
+            from .auth.rbac import get_mongo_branch_filter
+            customer_crud = CustomerCRUD(AsyncSessionLocal())
             # Apply branch filter based on caller's role
             branch_filter = get_mongo_branch_filter(current_user)
             customers_db = await customer_crud.get_customers(skip=skip, limit=limit, search_term=search_term, extra_filter=branch_filter)

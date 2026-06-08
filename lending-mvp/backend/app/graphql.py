@@ -485,6 +485,8 @@ class LoanTransactionNode:
                             name=lp.name,
                             interestRate=lp.interest_rate,
                             penaltyRate=lp.penalty_rate,
+                            amortizationType=lp.amortization_type,
+                            repaymentFrequency=lp.repayment_frequency,
                         )
             except:
                 pass
@@ -683,6 +685,7 @@ class LoanAmortizationNode:
     principal: Decimal
     interestRate: Decimal
     termMonths: int
+    repaymentFrequency: Optional[str] = None
     rows: List[AmortizationScheduleRow]
 
 
@@ -694,6 +697,8 @@ class LoanProductNode:
     description: Optional[str]
     interestRate: Decimal
     termMonths: int
+    amortizationType: Optional[str] = None
+    repaymentFrequency: Optional[str] = None
     minLoanAmount: Decimal = Decimal("1000.00")
     maxLoanAmount: Decimal = Decimal("1000000.00")
     createdAt: datetime = strawberry.field(default_factory=datetime.now)
@@ -1387,6 +1392,16 @@ class Query:
                 .scalars()
                 .all()
             )
+            # Fetch product to get repayment_frequency
+            loan_product = None
+            repayment_frequency = None
+            if l.product_id:
+                prod_result = await session.execute(
+                    select(PGLoanProduct).where(PGLoanProduct.id == l.product_id)
+                )
+                loan_product = prod_result.scalar_one_or_none()
+                if loan_product:
+                    repayment_frequency = loan_product.repayment_frequency
             rows = []
             for item in sched_items:
                 rows.append(
@@ -1410,6 +1425,7 @@ class Query:
                 principal=l.principal,
                 interestRate=l.approved_rate or Decimal("12.00"),
                 termMonths=l.term_months,
+                repaymentFrequency=repayment_frequency,
                 rows=rows,
             )
 
@@ -1426,6 +1442,8 @@ class Query:
                     description=p.description,
                     interestRate=p.interest_rate,
                     termMonths=12,
+                    amortizationType=p.amortization_type,
+                    repaymentFrequency=p.repayment_frequency,
                     createdAt=p.created_at,
                 )
                 for p in prods
@@ -2751,55 +2769,84 @@ class Mutation:
                 amortization_type = product.amortization_type
                 
                 from dateutil.relativedelta import relativedelta
+                from datetime import timedelta
+
+                # Frequency config (same logic as loan.py)
+                def _freq_config(freq: str, t_months: int):
+                    cf = {
+                        "daily": (t_months * 30, 1, 365),
+                        "weekly": (t_months * 4, 7, 52),
+                        "bi_weekly": (t_months * 2, 14, 26),
+                        "monthly": (t_months, 0, 12),
+                        "quarterly": (max(1, t_months // 3), 0, 4),
+                        "bullet": (1, 0, 1),
+                    }
+                    return cf.get(freq, (t_months, 0, 12))
+                def _calc_due(dt, i, ds, rd):
+                    if ds > 0:
+                        return dt + timedelta(days=i * ds)
+                    elif rd == 12:
+                        return dt + relativedelta(months=i)
+                    elif rd == 4:
+                        return dt + relativedelta(months=i * 3)
+                    else:
+                        return dt + relativedelta(months=i)
+
+                repayment_frequency = product.repayment_frequency
+                num_periods, days_step, rate_divisor = _freq_config(repayment_frequency, int(loan.term_months))
+                rate_per_period = (rate_annual / Decimal(100)) / Decimal(rate_divisor)
                 balance = principal
-                rate_monthly = (rate_annual / Decimal(100)) / Decimal(12)
+
+                def due(i: int):
+                    dt = _calc_due(loan.disbursed_at, i, days_step, rate_divisor)
+                    return dt.date()
 
                 if amortization_type == "flat_rate":
-                    interest_per_month = principal * rate_monthly
-                    principal_per_month = principal / Decimal(term_months)
-                    for i in range(1, term_months + 1):
-                        balance -= principal_per_month
+                    interest_per_period = principal * rate_per_period
+                    principal_per_period = principal / Decimal(num_periods)
+                    for i in range(1, num_periods + 1):
+                        balance -= principal_per_period
                         sched = AmortizationSchedule(
                             loan_id=loan.id,
                             installment_number=i,
-                            due_date=(loan.disbursed_at + relativedelta(months=i)).date(),
-                            principal_due=round(principal_per_month, 2),
-                            interest_due=round(interest_per_month, 2),
+                            due_date=due(i),
+                            principal_due=round(principal_per_period, 2),
+                            interest_due=round(interest_per_period, 2),
                             status="pending"
                         )
                         session.add(sched)
 
                 elif amortization_type == "declining_balance":
-                    if rate_monthly > 0:
-                        pmt = (principal * rate_monthly) / (
-                            Decimal(1) - (Decimal(1) + rate_monthly) ** Decimal(-term_months)
+                    if rate_per_period > 0:
+                        pmt = (principal * rate_per_period) / (
+                            Decimal(1) - (Decimal(1) + rate_per_period) ** Decimal(-num_periods)
                         )
                     else:
-                        pmt = principal / Decimal(term_months)
-                    for i in range(1, term_months + 1):
-                        interest_for_month = balance * rate_monthly
-                        principal_for_month = pmt - interest_for_month
-                        balance -= principal_for_month
+                        pmt = principal / Decimal(num_periods)
+                    for i in range(1, num_periods + 1):
+                        interest_for_period = balance * rate_per_period
+                        principal_for_period = pmt - interest_for_period
+                        balance -= principal_for_period
                         sched = AmortizationSchedule(
                             loan_id=loan.id,
                             installment_number=i,
-                            due_date=(loan.disbursed_at + relativedelta(months=i)).date(),
-                            principal_due=round(principal_for_month, 2),
-                            interest_due=round(interest_for_month, 2),
+                            due_date=due(i),
+                            principal_due=round(principal_for_period, 2),
+                            interest_due=round(interest_for_period, 2),
                             status="pending"
                         )
                         session.add(sched)
                 else:
                     # Default/Interest-only fallback
-                    interest_per_month = principal * rate_monthly
-                    principal_per_month = principal / Decimal(term_months)
-                    for i in range(1, term_months + 1):
+                    interest_per_period = principal * rate_per_period
+                    principal_per_period = principal / Decimal(num_periods)
+                    for i in range(1, num_periods + 1):
                         sched = AmortizationSchedule(
                             loan_id=loan.id,
                             installment_number=i,
-                            due_date=(loan.disbursed_at + relativedelta(months=i)).date(),
-                            principal_due=round(principal_per_month, 2),
-                            interest_due=round(interest_per_month, 2),
+                            due_date=due(i),
+                            principal_due=round(principal_per_period, 2),
+                            interest_due=round(interest_per_period, 2),
                             status="pending"
                         )
                         session.add(sched)

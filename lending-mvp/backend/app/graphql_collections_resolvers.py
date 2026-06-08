@@ -109,7 +109,6 @@ async def resolve_collections_due(
                 Customer,
                 cast(LoanApplication.customer_id, Customer.id.type) == Customer.id,
             )
-            .where(AmortizationSchedule.due_date <= effective_date)
             .where(AmortizationSchedule.status.in_(["pending", "partial", "overdue"]))
             .where(LoanApplication.status.notin_(["closed", "paid", "written_off"]))
         )
@@ -117,6 +116,12 @@ async def resolve_collections_due(
             sched_subq = sched_subq.where(LoanApplication.branch_code == effective_branch)
         if collections_officer_id:
             sched_subq = sched_subq.where(LoanApplication.collections_officer == collections_officer_id)
+        if due_date_from:
+            sched_subq = sched_subq.where(AmortizationSchedule.due_date >= due_date_from)
+        if due_date_to:
+            sched_subq = sched_subq.where(AmortizationSchedule.due_date <= due_date_to)
+        if not due_date_from and not due_date_to:
+            sched_subq = sched_subq.where(AmortizationSchedule.due_date <= effective_date)
         sched_subq = sched_subq.subquery("sched")
 
         oldest_subq = (

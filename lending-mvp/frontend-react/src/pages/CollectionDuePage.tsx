@@ -136,9 +136,15 @@ export default function CollectionDuePage() {
     }
 
     useEffect(() => {
-        fetchData()
         fetchFilterData()
     }, [])
+
+    // Fetch on mount + whenever date preset or filters change
+    useEffect(() => {
+        if (datePreset !== 'custom') {
+            fetchData()
+        }
+    }, [datePreset, selectedOfficer, selectedBranch])
 
     const assignOfficer = async (loanId: string, officerId: string) => {
         const token = localStorage.getItem('access_token')

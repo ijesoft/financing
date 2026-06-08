@@ -1,4 +1,5 @@
 import { useState, useEffect } from 'react'
+import { formatCurrency } from '@/lib/utils'
 import { Search, Plus, UserCog, X } from 'lucide-react'
 import { useAuth } from '@/context/AuthContext'
 import { getLoans } from '@/api/loans'
@@ -49,31 +50,41 @@ export default function LoansPage() {
         loan.status.toLowerCase().includes(search.toLowerCase())
     )
 
-    const openAssign = (loan: Loan) => {
+    const openAssign = async (loan: Loan) => {
+        // Await data fetch so modal appears with officers already populated
+        await fetchModalData()
         setAssignTarget(loan)
         setAssignBranchCode(loan.assignedCollectionsBranch || '')
-        fetchModalData().then(() => {
-            setAssignOfficerId(loan.collectionsOfficer || '')
-        })
+        setAssignOfficerId(loan.collectionsOfficer || '')
     }
 
     const fetchModalData = async () => {
         const token = localStorage.getItem('access_token')
+        const headers = { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' }
         try {
-            const officerRes = await fetch('/graphql', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-                body: JSON.stringify({ query: `query { usersByRole(role: "collections_officer") { id fullName } }` })
-            })
-            const officerData = await officerRes.json()
-            
-            const branchRes = await fetch('/graphql', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json', 'Authorization': token ? `Bearer ${token}` : '' },
-                body: JSON.stringify({ query: `query { branches { code name } }` })
-            })
-            const branchData = await branchRes.json()
-            
+            const [officerRes, branchRes] = await Promise.all([
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ query: `query { usersByRole(role: "collections_officer") { id fullName } }` })
+                }),
+                fetch('/graphql', {
+                    method: 'POST',
+                    headers,
+                    body: JSON.stringify({ query: `query { branches { code name } }` })
+                })
+            ])
+            const [officerData, branchData] = await Promise.all([
+                officerRes.json(),
+                branchRes.json()
+            ])
+            // Log GraphQL errors silently so they don't break the UX but are visible in devtools
+            if (officerData.errors) {
+                console.warn('GraphQL errors fetching officers:', officerData.errors)
+            }
+            if (branchData.errors) {
+                console.warn('GraphQL errors fetching branches:', branchData.errors)
+            }
             setOfficers(officerData.data?.usersByRole || [])
             setBranches(branchData.data?.branches || [])
         } catch (e) {
@@ -211,7 +222,7 @@ export default function LoansPage() {
                                         <div className="text-xs text-muted-foreground">{loan.productId}</div>
                                     </td>
                                     <td className="px-4 py-3 text-foreground font-medium">
-                                        {loan.principal ? `₱${loan.principal.toLocaleString()}` : '—'}
+                                        {loan.principal ? formatCurrency(loan.principal) : '—'}
                                     </td>
                                     <td className="px-4 py-3">
                                         <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(loan.status)}`}>

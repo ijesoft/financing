@@ -64,29 +64,53 @@ export default function AmortizationSchedulePage() {
 
     const loan: LoanDetail = loanData?.loan
     const amortizationRows: AmortizationRow[] = amortizationData?.loanAmortization?.rows || []
+    const repaymentFrequency: string = amortizationData?.loanAmortization?.repaymentFrequency || 'monthly'
 
     const principal = parseFloat(String(loan?.approvedPrincipal || loan?.principal || 0))
     const annualRatePercent = parseFloat(String(loan?.approvedRate || 0))
     const termMonths = parseInt(String(loan?.termMonths || 0))
 
+    // Frequency labels and divisors
+    const FREQ_CONFIG: Record<string, { label: string, divisor: number, periods: number }> = {
+        daily:       { label: 'Daily',       divisor: 365, periods: termMonths * 30 },
+        weekly:      { label: 'Weekly',      divisor: 52,  periods: termMonths * 4 },
+        bi_weekly:   { label: 'Bi-Weekly',   divisor: 26,  periods: termMonths * 2 },
+        semi_monthly:{ label: 'Semi-Monthly',divisor: 24,  periods: termMonths * 2 },
+        monthly:     { label: 'Monthly',     divisor: 12,  periods: termMonths },
+        quarterly:   { label: 'Quarterly',   divisor: 4,   periods: Math.max(1, Math.floor(termMonths / 3)) },
+        semi_annual: { label: 'Semi-Annual', divisor: 2,   periods: Math.max(1, Math.floor(termMonths / 6)) },
+        bullet:      { label: 'Bullet',      divisor: 12,  periods: 1 },
+    }
+    const freqConfig = FREQ_CONFIG[repaymentFrequency] || FREQ_CONFIG.monthly
+
     // Calculate amortization locally if backend returns empty
     const calculateLocalAmortization = (): AmortizationRow[] => {
         if (amortizationRows.length > 0) return amortizationRows
-        if (principal <= 0 || termMonths <= 0) return []
+        if (principal <= 0 || freqConfig.periods <= 0) return []
         
-        const monthlyRate = annualRatePercent / 100 / 12
-        const monthlyPayment = (principal * monthlyRate * Math.pow(1 + monthlyRate, termMonths)) / (Math.pow(1 + monthlyRate, termMonths) - 1)
+        const ratePerPeriod = annualRatePercent / 100 / freqConfig.divisor
+        const payment = (principal * ratePerPeriod * Math.pow(1 + ratePerPeriod, freqConfig.periods)) / (Math.pow(1 + ratePerPeriod, freqConfig.periods) - 1)
         
         const rows: AmortizationRow[] = []
         let balance = principal
         
-        for (let i = 1; i <= termMonths; i++) {
-            const interestDue = balance * monthlyRate
-            const principalDue = monthlyPayment - interestDue
+        for (let i = 1; i <= freqConfig.periods; i++) {
+            const interestDue = balance * ratePerPeriod
+            const principalDue = payment - interestDue
             balance = Math.max(0, balance - principalDue)
             
             const dueDate = new Date()
-            dueDate.setMonth(dueDate.getMonth() + i)
+            if (repaymentFrequency === 'daily') {
+                dueDate.setDate(dueDate.getDate() + i)
+            } else if (repaymentFrequency === 'weekly') {
+                dueDate.setDate(dueDate.getDate() + i * 7)
+            } else if (repaymentFrequency === 'bi_weekly') {
+                dueDate.setDate(dueDate.getDate() + i * 14)
+            } else if (repaymentFrequency === 'semi_monthly') {
+                dueDate.setDate(dueDate.getDate() + i * 15)
+            } else {
+                dueDate.setMonth(dueDate.getMonth() + i)
+            }
             
             rows.push({
                 installmentNumber: i,
@@ -109,7 +133,7 @@ export default function AmortizationSchedulePage() {
     
     const totalInterest = effectiveRows.reduce((sum, row) => sum + parseFloat(String(row.interestDue || 0)), 0)
     const totalPayments = principal + totalInterest
-    const periodicPayment = termMonths > 0 ? totalPayments / termMonths : 0
+    const periodicPayment = freqConfig.periods > 0 ? totalPayments / freqConfig.periods : 0
 
     const displayRows = showAll ? effectiveRows : effectiveRows.slice(0, 12)
 
@@ -227,11 +251,11 @@ export default function AmortizationSchedulePage() {
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-6 pt-4 border-t border-border/50">
                     <div>
                         <p className="text-xs text-muted-foreground uppercase tracking-wider">Payment Frequency</p>
-                        <p className="text-lg font-bold mt-1">Monthly</p>
+                        <p className="text-lg font-bold mt-1">{freqConfig.label}</p>
                     </div>
                     <div>
                         <p className="text-xs text-muted-foreground uppercase tracking-wider">Periodic Rate</p>
-                        <p className="text-lg font-bold mt-1">{(annualRatePercent / 12).toFixed(3)}%</p>
+                        <p className="text-lg font-bold mt-1">{(annualRatePercent / freqConfig.divisor).toFixed(4)}%</p>
                     </div>
                     <div>
                         <p className="text-xs text-muted-foreground uppercase tracking-wider">Total Interest</p>
@@ -246,7 +270,7 @@ export default function AmortizationSchedulePage() {
 
             {/* Periodic Payment Summary */}
             <div className="glass p-6 rounded-xl">
-                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">Monthly Payment</p>
+                <p className="text-xs text-muted-foreground uppercase tracking-wider mb-2">{freqConfig.label} Payment</p>
                 <p className="text-3xl font-bold text-gray-900">{safeFormatCurrency(periodicPayment)}</p>
             </div>
 

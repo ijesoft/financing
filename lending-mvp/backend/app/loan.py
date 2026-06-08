@@ -293,6 +293,7 @@ class LoanQuery:
         rate_annual: Decimal,
         term_months: int,
         amortization_type: str,
+        repayment_frequency: str = "monthly",
     ) -> List[ScheduleRowPreview]:
         current_user: UserInDB = info.context.get("current_user")
         if not current_user:
@@ -301,8 +302,42 @@ class LoanQuery:
             )
 
         return _build_schedule_preview(
-            principal, rate_annual, term_months, amortization_type, datetime.now()
+            principal, rate_annual, term_months, amortization_type, datetime.now(), repayment_frequency
         )
+
+
+def _get_schedule_config(repayment_frequency: str, term_months: int):
+    """Return (num_periods, days_between_payments, rate_divisor) for the given frequency.
+    
+    - days_between_payments = 0 means use relativedelta with months
+    - rate_divisor is the number of periods per year for interest calculation
+    """
+    configs = {
+        "daily": (term_months * 30, 1, 365),
+        "weekly": (term_months * 4, 7, 52),
+        "bi_weekly": (term_months * 2, 14, 26),
+        "semi_monthly": (term_months * 2, 15, 24),
+        "monthly": (term_months, 0, 12),
+        "quarterly": (max(1, term_months // 3), 0, 4),
+        "semi_annual": (max(1, term_months // 6), 0, 2),
+        "bullet": (1, 0, 1),
+    }
+    return configs.get(repayment_frequency, (term_months, 0, 12))
+
+
+def _calc_due_date(start_date: datetime, i: int, days_step: int, rate_divisor: int) -> datetime:
+    """Calculate the due date for the i-th installment based on frequency config."""
+    from datetime import timedelta
+    if days_step > 0:
+        return start_date + timedelta(days=i * days_step)
+    elif rate_divisor == 12:   # monthly
+        return start_date + relativedelta(months=i)
+    elif rate_divisor == 4:    # quarterly
+        return start_date + relativedelta(months=i * 3)
+    elif rate_divisor == 2:    # semi-annual
+        return start_date + relativedelta(months=i * 6)
+    else:
+        return start_date + relativedelta(months=i)
 
 
 def _build_schedule_preview(
@@ -311,98 +346,111 @@ def _build_schedule_preview(
     term_months: int,
     amortization_type: str,
     start_date: datetime,
+    repayment_frequency: str = "monthly",
 ) -> List[ScheduleRowPreview]:
-    """Pure helper to compute amortization preview rows for all 4 types."""
+    """Pure helper to compute amortization preview rows.
+    
+    Supports repayment_frequency: daily, weekly, bi_weekly, semi_monthly,
+    monthly, quarterly, semi_annual, bullet.
+    """
+    from datetime import timedelta
+    
     schedule: List[ScheduleRowPreview] = []
     balance = principal
-    rate_monthly = (rate_annual / Decimal(100)) / Decimal(12)
+    
+    num_periods, days_step, rate_divisor = _get_schedule_config(repayment_frequency, term_months)
+    rate_per_period = (rate_annual / Decimal(100)) / Decimal(rate_divisor)
+    
+    def due(i: int) -> datetime:
+        return _calc_due_date(start_date, i, days_step, rate_divisor)
 
     if amortization_type == "flat_rate":
-        interest_per_month = principal * rate_monthly
-        principal_per_month = principal / Decimal(term_months)
-        for i in range(1, term_months + 1):
-            balance -= principal_per_month
+        interest_per_period = principal * rate_per_period
+        principal_per_period = principal / Decimal(num_periods)
+        for i in range(1, num_periods + 1):
+            balance -= principal_per_period
             schedule.append(
                 ScheduleRowPreview(
                     installment_number=i,
-                    due_date=start_date + relativedelta(months=i),
-                    principal_due=round(principal_per_month, 2),
-                    interest_due=round(interest_per_month, 2),
-                    total_due=round(principal_per_month + interest_per_month, 2),
+                    due_date=due(i),
+                    principal_due=round(principal_per_period, 2),
+                    interest_due=round(interest_per_period, 2),
+                    total_due=round(principal_per_period + interest_per_period, 2),
                     balance=max(Decimal(0), round(balance, 2)),
                 )
             )
 
     elif amortization_type == "declining_balance":
-        if rate_monthly > 0:
-            pmt = (principal * rate_monthly) / (
-                Decimal(1) - (Decimal(1) + rate_monthly) ** Decimal(-term_months)
+        if rate_per_period > 0:
+            pmt = (principal * rate_per_period) / (
+                Decimal(1) - (Decimal(1) + rate_per_period) ** Decimal(-num_periods)
             )
         else:
-            pmt = principal / Decimal(term_months)
-        for i in range(1, term_months + 1):
-            interest_for_month = balance * rate_monthly
-            principal_for_month = pmt - interest_for_month
-            balance -= principal_for_month
+            pmt = principal / Decimal(num_periods)
+        for i in range(1, num_periods + 1):
+            interest_for_period = balance * rate_per_period
+            principal_for_period = pmt - interest_for_period
+            balance -= principal_for_period
             schedule.append(
                 ScheduleRowPreview(
                     installment_number=i,
-                    due_date=start_date + relativedelta(months=i),
-                    principal_due=round(principal_for_month, 2),
-                    interest_due=round(interest_for_month, 2),
+                    due_date=due(i),
+                    principal_due=round(principal_for_period, 2),
+                    interest_due=round(interest_for_period, 2),
                     total_due=round(pmt, 2),
                     balance=max(Decimal(0), round(balance, 2)),
                 )
             )
 
     elif amortization_type == "balloon_payment":
-        # Interest-only payments for term-1 months, then full principal + interest on final month
-        interest_per_month = balance * rate_monthly
-        for i in range(1, term_months):
+        # Interest-only payments for num_periods-1, then full principal + interest on final
+        interest_per_period = balance * rate_per_period
+        for i in range(1, num_periods):
             schedule.append(
                 ScheduleRowPreview(
                     installment_number=i,
-                    due_date=start_date + relativedelta(months=i),
+                    due_date=due(i),
                     principal_due=Decimal(0),
-                    interest_due=round(interest_per_month, 2),
-                    total_due=round(interest_per_month, 2),
+                    interest_due=round(interest_per_period, 2),
+                    total_due=round(interest_per_period, 2),
                     balance=round(balance, 2),
                 )
             )
         # Final balloon payment
         schedule.append(
             ScheduleRowPreview(
-                installment_number=term_months,
-                due_date=start_date + relativedelta(months=term_months),
+                installment_number=num_periods,
+                due_date=due(num_periods),
                 principal_due=round(principal, 2),
-                interest_due=round(interest_per_month, 2),
-                total_due=round(principal + interest_per_month, 2),
+                interest_due=round(interest_per_period, 2),
+                total_due=round(principal + interest_per_period, 2),
                 balance=Decimal(0),
             )
         )
 
     elif amortization_type == "interest_only":
-        # Interest-only every month, full principal due on last month
-        interest_per_month = balance * rate_monthly
-        for i in range(1, term_months):
+        # Interest-only every period, full principal due on last period
+        interest_per_period = balance * rate_per_period
+        principal_per_period = principal / Decimal(num_periods)
+        for i in range(1, num_periods):
             schedule.append(
                 ScheduleRowPreview(
                     installment_number=i,
-                    due_date=start_date + relativedelta(months=i),
+                    due_date=due(i),
                     principal_due=Decimal(0),
-                    interest_due=round(interest_per_month, 2),
-                    total_due=round(interest_per_month, 2),
+                    interest_due=round(interest_per_period, 2),
+                    total_due=round(interest_per_period, 2),
                     balance=round(balance, 2),
                 )
             )
-        # Final month: principal + interest
+        # Final period: principal + interest
         schedule.append(
             ScheduleRowPreview(
-                installment_number=term_months,
-                due_date=start_date + relativedelta(months=term_months),
+                installment_number=num_periods,
+                due_date=due(num_periods),
                 principal_due=round(principal, 2),
-                interest_due=round(interest_per_month, 2),
-                total_due=round(principal + interest_per_month, 2),
+                interest_due=round(interest_per_period, 2),
+                total_due=round(principal + interest_per_period, 2),
                 balance=Decimal(0),
             )
         )
@@ -637,6 +685,7 @@ class LoanMutation:
                 loan.term_months,
                 prod.amortization_type,
                 loan.disbursed_at,
+                prod.repayment_frequency,
             )
             for row in preview_rows:
                 sched = AmortizationSchedule(
