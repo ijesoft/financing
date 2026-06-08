@@ -49,6 +49,26 @@ from .graphql_collections_resolvers import (
     resolve_collections_due_summary,
     resolve_aging_report,
 )
+from .financial_reports import (
+    TrialBalanceReport,
+    TrialBalanceRow,
+    IncomeStatementReport,
+    IncomeStatementRow,
+    BalanceSheetReport,
+    BalanceSheetRow,
+    BalanceSheetSection,
+    ARAgingReport,
+    ARAgingCustomerRow,
+    ARAgingBucket,
+    APAgingReport,
+    APAgingRow,
+    resolve_trial_balance,
+    resolve_income_statement,
+    resolve_balance_sheet,
+    resolve_ar_aging,
+    resolve_ap_aging,
+)
+)
 from .database.pg_models import (
     CustomerActivity,
     Collection,
@@ -184,6 +204,16 @@ class BranchResponse:
     success: bool
     message: str
     branch: Optional[BranchNode] = None
+
+
+@strawberry.input
+class CollectionCreateInput:
+    customerId: str
+    amount: Decimal
+    dueDate: date
+    referenceNumber: Optional[str] = None
+    collectionType: Optional[str] = None
+    notes: Optional[str] = None
 
 
 @strawberry.type
@@ -325,16 +355,6 @@ class SavingsTransactionResponse:
     success: bool
     message: str
     transaction: Optional[SavingsTransactionNode] = None
-
-
-@strawberry.type
-class CollectionNode:
-    id: str
-    customerId: str
-    amount: Decimal
-    status: str
-    dueDate: date
-    createdAt: datetime
 
 
 @strawberry.type
@@ -650,7 +670,20 @@ class CollectionNode:
     amount: Decimal
     status: str
     dueDate: date
+    daysPastDue: int = 0
+    agingBucket: str = "current"
+    collectionDate: Optional[date] = None
+    collectedBy: Optional[str] = None
+    referenceNumber: Optional[str] = None
+    collectionType: Optional[str] = None
+    notes: Optional[str] = None
     createdAt: datetime
+
+
+@strawberry.type
+class CollectionConnection:
+    collections: List[CollectionNode]
+    total: int
 
 
 @strawberry.type
@@ -1145,22 +1178,85 @@ class Query:
             ]
 
     @strawberry.field
-    async def collections(self) -> List[CollectionNode]:
+    async def collections(
+        self,
+        first: int = 50,
+        offset: int = 0,
+        search: Optional[str] = None,
+        status: Optional[str] = None,
+        dateFrom: Optional[date] = None,
+        dateTo: Optional[date] = None,
+    ) -> CollectionConnection:
         session_factory = get_async_session_local()
         async with session_factory() as session:
-            result = await session.execute(select(Collection))
+            query = select(Collection)
+            count_query = select(func.count(Collection.id))
+
+            if status:
+                query = query.where(Collection.status == status)
+                count_query = count_query.where(Collection.status == status)
+            if dateFrom:
+                query = query.where(Collection.due_date >= dateFrom)
+                count_query = count_query.where(Collection.due_date >= dateFrom)
+            if dateTo:
+                query = query.where(Collection.due_date <= dateTo)
+                count_query = count_query.where(Collection.due_date <= dateTo)
+
+            total_result = await session.execute(count_query)
+            total = total_result.scalar() or 0
+
+            query = query.order_by(Collection.due_date.desc()).offset(offset).limit(first)
+            result = await session.execute(query)
             collections = result.scalars().all()
-            return [
-                CollectionNode(
-                    id=str(c.id),
-                    customerId=str(c.customer_id),
-                    amount=c.amount,
-                    status=c.status,
-                    dueDate=c.due_date,
-                    createdAt=c.created_at,
+
+            customer_ids = list({str(c.customer_id) for c in collections})
+            customer_names: dict[str, str] = {}
+            if customer_ids:
+                try:
+                    int_ids = [int(cid) for cid in customer_ids if cid.isdigit()]
+                    if int_ids:
+                        cust_result = await session.execute(
+                            select(Customer).where(Customer.id.in_(int_ids))
+                        )
+                        customer_names = {str(c.id): c.display_name for c in cust_result.scalars().all()}
+                except (ValueError, TypeError):
+                    pass
+
+            today = date.today()
+            nodes = []
+            for c in collections:
+                dpd = max(0, (today - c.due_date.date()).days) if c.due_date else 0
+                if dpd <= 0:
+                    bucket = "current"
+                elif dpd <= 30:
+                    bucket = "1-30_days"
+                elif dpd <= 60:
+                    bucket = "31-60_days"
+                elif dpd <= 90:
+                    bucket = "61-90_days"
+                else:
+                    bucket = "90+_days"
+
+                nodes.append(
+                    CollectionNode(
+                        id=str(c.id),
+                        customerId=str(c.customer_id),
+                        borrowerName=customer_names.get(str(c.customer_id)),
+                        amount=c.amount,
+                        status=c.status,
+                        dueDate=c.due_date,
+                        daysPastDue=dpd,
+                        agingBucket=bucket,
+                        collectionDate=c.collection_date,
+                        collectedBy=c.collected_by,
+                        referenceNumber=c.reference_number,
+                        collectionType=c.collection_type,
+                        notes=c.notes,
+                        createdAt=c.created_at,
+                    )
                 )
-                for c in collections
-            ]
+
+            return CollectionConnection(collections=nodes, total=total)
 
     @strawberry.field
     async def collectionDue(self) -> List[CollectionNode]:
@@ -1173,35 +1269,55 @@ class Query:
                 .order_by(Collection.due_date.asc())
             )
             collections = result.scalars().all()
-            
-            # Fetch customer names
-            customer_ids = [c.customer_id for c in collections]
-            customer_names = {}
+
+            customer_ids = list({str(c.customer_id) for c in collections})
+            customer_names: dict[str, str] = {}
             if customer_ids:
-                from .database.pg_core_models import Customer
-                # Convert string IDs to integers for comparison
                 try:
-                    int_ids = [int(cid) for cid in customer_ids]
-                    cust_result = await session.execute(
-                        select(Customer).where(Customer.id.in_(int_ids))
-                    )
-                    customers = cust_result.scalars().all()
-                    customer_names = {str(c.id): c.display_name for c in customers}
+                    int_ids = [int(cid) for cid in customer_ids if cid.isdigit()]
+                    if int_ids:
+                        cust_result = await session.execute(
+                            select(Customer).where(Customer.id.in_(int_ids))
+                        )
+                        customer_names = {str(c.id): c.display_name for c in cust_result.scalars().all()}
                 except (ValueError, TypeError):
-                    pass  # Skip if conversion fails
-            
-            return [
-                CollectionNode(
-                    id=str(c.id),
-                    customerId=str(c.customer_id),
-                    borrowerName=customer_names.get(str(c.customer_id)),
-                    amount=c.amount,
-                    status=c.status,
-                    dueDate=c.due_date,
-                    createdAt=c.created_at,
+                    pass
+
+            today_date = date.today()
+            nodes = []
+            for c in collections:
+                dpd = max(0, (today_date - c.due_date.date()).days) if c.due_date else 0
+                if dpd <= 0:
+                    bucket = "current"
+                elif dpd <= 30:
+                    bucket = "1-30_days"
+                elif dpd <= 60:
+                    bucket = "31-60_days"
+                elif dpd <= 90:
+                    bucket = "61-90_days"
+                else:
+                    bucket = "90+_days"
+
+                nodes.append(
+                    CollectionNode(
+                        id=str(c.id),
+                        customerId=str(c.customer_id),
+                        borrowerName=customer_names.get(str(c.customer_id)),
+                        amount=c.amount,
+                        status=c.status,
+                        dueDate=c.due_date,
+                        daysPastDue=dpd,
+                        agingBucket=bucket,
+                        collectionDate=c.collection_date,
+                        collectedBy=c.collected_by,
+                        referenceNumber=c.reference_number,
+                        collectionType=c.collection_type,
+                        notes=c.notes,
+                        createdAt=c.created_at,
+                    )
                 )
-                for c in collections
-            ]
+
+            return nodes
 
     @strawberry.field
     async def glAccounts(self) -> List[GLAccountNode]:
@@ -1494,12 +1610,47 @@ class Query:
         return await resolve_aging_report(info, asOf, branchCode)
 
     @strawberry.field
-    async def incomeStatement(self, year: int, month: int) -> FinancialStatementNode:
-        return FinancialStatementNode()
+    async def trialBalance(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+    ) -> TrialBalanceReport:
+        return await resolve_trial_balance(info, asOf)
 
     @strawberry.field
-    async def balanceSheet(self, year: int, month: int) -> FinancialStatementNode:
-        return FinancialStatementNode()
+    async def incomeStatement(
+        self,
+        info: Info,
+        year: int,
+        month: int,
+    ) -> IncomeStatementReport:
+        return await resolve_income_statement(info, year, month)
+
+    @strawberry.field
+    async def balanceSheet(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+    ) -> BalanceSheetReport:
+        return await resolve_balance_sheet(info, asOf)
+
+    @strawberry.field
+    async def arAging(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+    ) -> ARAgingReport:
+        return await resolve_ar_aging(info, asOf, branchCode)
+
+    @strawberry.field
+    async def apAging(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+    ) -> APAgingReport:
+        return await resolve_ap_aging(info, asOf, branchCode)
 
     @strawberry.field
     async def unresolvedAlerts(self) -> List[Health]:
@@ -3219,6 +3370,34 @@ class Mutation:
                 loan.assigned_collections_branch = branchCode
                 await session.commit()
                 return MutationResponse(success=True, message="Collections branch assigned")
+            except Exception as e:
+                await session.rollback()
+                return MutationResponse(success=False, message=str(e))
+
+    @strawberry.mutation
+    async def create_collection(
+        self, info: Info, input: CollectionCreateInput
+    ) -> MutationResponse:
+        current_user = info.context.get("current_user")
+        if not current_user or current_user.role not in ("admin", "branch_manager", "collections_officer"):
+            return MutationResponse(success=False, message="Not authorized")
+
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            try:
+                new_collection = Collection(
+                    customer_id=input.customerId,
+                    amount=input.amount,
+                    status="pending",
+                    due_date=input.dueDate,
+                    reference_number=input.referenceNumber,
+                    collection_type=input.collectionType,
+                    notes=input.notes,
+                    collected_by=str(current_user.id),
+                )
+                session.add(new_collection)
+                await session.commit()
+                return MutationResponse(success=True, message="Collection created")
             except Exception as e:
                 await session.rollback()
                 return MutationResponse(success=False, message=str(e))

@@ -194,10 +194,10 @@ export default function CollectionDuePage() {
         )
     }, [entries, search])
 
-    const totalBalanceDue = searchFiltered.reduce((sum, e) => sum + e.balanceDue, 0)
-    const overdueCount = searchFiltered.filter(e => e.dpd > 0).length
-    const dueTodayCount = searchFiltered.filter(e => e.dpd === 0).length
-    const totalPrincipalDue = searchFiltered.reduce((sum, e) => sum + e.principalDue, 0)
+    const totalBalanceDue = searchFiltered.reduce((sum, e) => sum + Number(e.balanceDue ?? 0), 0)
+    const overdueCount = searchFiltered.filter(e => (e.dpd ?? 0) > 0).length
+    const dueTodayCount = searchFiltered.filter(e => (e.dpd ?? 0) === 0).length
+    const totalPrincipalDue = searchFiltered.reduce((sum, e) => sum + Number(e.principalDue ?? 0), 0)
 
     const getDpdColor = (dpd: number) => {
         if (dpd > 30) return 'text-red-400'

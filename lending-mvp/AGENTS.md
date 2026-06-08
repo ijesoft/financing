@@ -100,3 +100,25 @@ You are a SOTA Agentic Coding Assistant. You excel at long-horizon reasoning and
 - Frontend dynamically displays payment frequency label and calculates periodic rate with correct divisor
 - Loan #9's amortization regenerated: 90 daily payments (Jun 9 → Sep 6) at ₱172.42/each (₱166.67 principal + ₱5.75 interest) at 14% flat rate
 - Demo product MF-Arawan (ID 5) confirmed: `repayment_frequency: daily`, `amortization_type: flat_rate`
+
+## 6. Financial Reports — Trial Balance, Income Statement, Balance Sheet, AR Aging, AP Aging
+**Date:** 2026-06-08
+**Files Created/Modified:**
+- `backend/app/financial_reports.py` — Created 5 GAAP-compliant report resolvers with date-filtered GL balances
+- `backend/app/graphql.py` — Wired imports and swapped stub resolvers for real ones
+- `frontend-react/src/pages/reports/TrialBalancePage.tsx` — Created with date/type/search filters, balanced check
+- `frontend-react/src/pages/reports/IncomeStatementPage.tsx` — Created with month/year selector, income/expense sections
+- `frontend-react/src/pages/reports/BalanceSheetPage.tsx` — Created with assets/liabilities/equity sections
+- `frontend-react/src/pages/reports/ARAgingPage.tsx` — Created with per-customer 5-bucket aging table
+- `frontend-react/src/pages/reports/APAgingPage.tsx` — Created with per-branch 5-bucket aging table
+- `frontend-react/src/App.tsx` — Added 5 report routes under `/reports/*`
+- `frontend-react/src/components/layout/Sidebar.tsx` — Added Financial Reports nav section for admin/branch_manager/auditor
+
+**Summary:**
+- Implemented 5 core financial reports: trial balance, income statement, balance sheet, AR aging (loan-based), AP aging (undisbursed principal-based)
+- Backend uses `_get_account_balances_up_to()` and `_get_period_balances()` helpers for date-filtered period-accurate GL balances
+- GAAP-compliant normal balance rules: asset/expense = debit-credit, others = credit-debit
+- Income statement uses period balances (value_date) for year/month, net income rolled into retained earnings (3100) on balance sheet
+- AR aging uses loan amortization schedules (pending/partial/overdue installments) with 5 aging buckets
+- AP aging uses undisbursed approved loan principal (approved_principal - total disbursed) grouped by branch
+- All frontend pages use dark theme, Intl.NumberFormat('en-PH'), date/period selectors, RBAC-protected at GraphQL layer

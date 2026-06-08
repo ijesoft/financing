@@ -25,6 +25,11 @@ import {
     Settings,
     Smartphone,
     Calendar,
+    BarChart3,
+    Receipt,
+    Landmark,
+    TrendingUp,
+    TrendingDown,
 } from 'lucide-react'
 
 // Role-based nav configuration
@@ -158,6 +163,40 @@ export default function Sidebar() {
                         <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
                     </NavLink>
                 ))}
+
+                {/* Reports section for financial roles */}
+                {user?.role && ['admin', 'branch_manager', 'auditor'].includes(user.role) && (
+                    <>
+                        <p className="px-3 text-xs font-semibold text-muted-foreground uppercase tracking-wider mb-3 mt-4">
+                            Financial Reports
+                        </p>
+                        <NavLink to="/reports/trial-balance" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <BarChart3 className="w-4 h-4" />
+                            <span className="flex-1">Trial Balance</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
+                        <NavLink to="/reports/income-statement" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <TrendingUp className="w-4 h-4" />
+                            <span className="flex-1">Income Statement</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
+                        <NavLink to="/reports/balance-sheet" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <Landmark className="w-4 h-4" />
+                            <span className="flex-1">Balance Sheet</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
+                        <NavLink to="/reports/ar-aging" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <Receipt className="w-4 h-4" />
+                            <span className="flex-1">AR Aging</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
+                        <NavLink to="/reports/ap-aging" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <TrendingDown className="w-4 h-4" />
+                            <span className="flex-1">AP Aging</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
+                    </>
+                )}
 
                 {/* Security indicator for admin */}
                 {user?.role === 'admin' && (

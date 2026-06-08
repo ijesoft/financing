@@ -33,6 +33,11 @@ import NotificationPreferencesPage from '@/pages/NotificationPreferencesPage'
 import CollectionDuePage from '@/pages/CollectionDuePage'
 import AmortizationSchedulePage from '@/pages/AmortizationSchedulePage'
 import PaymentHistoryPage from '@/pages/PaymentHistoryPage'
+import TrialBalancePage from '@/pages/reports/TrialBalancePage'
+import IncomeStatementPage from '@/pages/reports/IncomeStatementPage'
+import BalanceSheetPage from '@/pages/reports/BalanceSheetPage'
+import ARAgingPage from '@/pages/reports/ARAgingPage'
+import APAgingPage from '@/pages/reports/APAgingPage'
 
 function ProtectedLayout() {
     const { isAuthenticated } = useAuth()
@@ -75,6 +80,11 @@ function ProtectedLayout() {
                         <Route path="/chart-of-accounts" element={<ChartOfAccountsPage />} />
                         <Route path="/journal-entries" element={<JournalEntriesPage />} />
                         <Route path="/journal-entries/create" element={<CreateJournalEntryPage />} />
+                        <Route path="/reports/trial-balance" element={<TrialBalancePage />} />
+                        <Route path="/reports/income-statement" element={<IncomeStatementPage />} />
+                        <Route path="/reports/balance-sheet" element={<BalanceSheetPage />} />
+                        <Route path="/reports/ar-aging" element={<ARAgingPage />} />
+                        <Route path="/reports/ap-aging" element={<APAgingPage />} />
                         <Route path="/savings/:id" element={<SavingsDetailPage />} />
                         <Route path="/savings/:id/transaction" element={<SavingsTransactionPage />} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />

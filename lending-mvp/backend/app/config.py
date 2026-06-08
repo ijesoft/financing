@@ -19,7 +19,7 @@ class Settings(BaseSettings):
     # Generate with:  python -c "import secrets; print(secrets.token_urlsafe(64))"
     JWT_SECRET_KEY: str = Field(..., min_length=32)
     ALGORITHM: str = "HS256"
-    ACCESS_TOKEN_EXPIRE_MINUTES: int = 15          # Short-lived access tokens
+    ACCESS_TOKEN_EXPIRE_MINUTES: int = 480         # 8-hour access tokens
     REFRESH_TOKEN_EXPIRE_DAYS: int = 30            # Long-lived refresh tokens
     TOTP_TEMP_TOKEN_EXPIRE_MINUTES: int = 5        # Temp token issued during 2FA step
 
