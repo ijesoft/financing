@@ -195,6 +195,10 @@ class ARAgingBucket:
     label: str
     amount: Decimal
 
+    @strawberry.field
+    def total(self) -> Decimal:
+        return self.amount
+
 
 @strawberry.type
 class ARAgingCustomerRow:
