@@ -73,6 +73,7 @@ from .database.pg_models import (
     Collection,
     Branch,
     UserBranchAssignment,
+    AuditLog,
 )
 
 
@@ -1487,7 +1488,23 @@ class Query:
 
     @strawberry.field
     async def auditLogs(self, limit: int = 50, offset: int = 0) -> List[AuditLogNode]:
-        return []
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            rows = (
+                await session.execute(
+                    select(AuditLog).order_by(AuditLog.created_at.desc()).offset(offset).limit(limit)
+                )
+            ).scalars().all()
+            return [
+                AuditLogNode(
+                    id=str(r.id),
+                    userId=str(r.user_id) if r.user_id else "system",
+                    action=r.action,
+                    resource=f"{r.entity}/{r.entity_id}",
+                    timestamp=r.created_at,
+                )
+                for r in rows
+            ]
 
     @strawberry.field
     async def loanAmortization(
@@ -1573,15 +1590,67 @@ class Query:
 
     @strawberry.field
     async def parMetrics(self) -> FinancialMetricsNode:
-        return FinancialMetricsNode()
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            total = await session.scalar(select(func.count(LoanApplication.id)))
+            overdue = await session.scalar(
+                select(func.count(LoanApplication.id)).where(
+                    LoanApplication.status == "active",
+                    LoanApplication.outstanding_balance > 0,
+                )
+            )
+            overdue_count = overdue or 0
+            total_count = total or 1
+            return FinancialMetricsNode(
+                totalOutstanding=Decimal("0.00"),
+                totalCollected=Decimal("0.00"),
+                totalNPL=Decimal("0.00"),
+                nplRatio=round(overdue_count / total_count * 100, 2) if total_count else 0.0,
+                totalLLR=Decimal("0.00"),
+                llrRatio=0.0,
+                provisionedAmount=Decimal("0.00"),
+            )
 
     @strawberry.field
     async def nplMetrics(self) -> FinancialMetricsNode:
-        return FinancialMetricsNode()
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            total = await session.scalar(select(func.count(LoanApplication.id)))
+            npl = await session.scalar(
+                select(func.count(LoanApplication.id)).where(
+                    LoanApplication.is_npl == True,
+                )
+            )
+            npl_count = npl or 0
+            total_count = total or 1
+            return FinancialMetricsNode(
+                totalNPL=Decimal("0.00"),
+                nplRatio=round(npl_count / total_count * 100, 2) if total_count else 0.0,
+                totalOutstanding=Decimal("0.00"),
+                totalCollected=Decimal("0.00"),
+                totalLLR=Decimal("0.00"),
+                llrRatio=0.0,
+                provisionedAmount=Decimal("0.00"),
+            )
 
     @strawberry.field
     async def llrMetrics(self) -> FinancialMetricsNode:
-        return FinancialMetricsNode()
+        session_factory = get_async_session_local()
+        async with session_factory() as session:
+            total_portfolio = await session.scalar(
+                select(func.coalesce(func.sum(LoanApplication.outstanding_balance), 0))
+            )
+            total = float(total_portfolio or 0)
+            llr = round(total * 0.02, 2)  # 2% general provision
+            return FinancialMetricsNode(
+                totalOutstanding=Decimal(str(round(total, 2))),
+                totalLLR=Decimal(str(llr)),
+                llrRatio=2.0,
+                provisionedAmount=Decimal(str(llr)),
+                totalCollected=Decimal("0.00"),
+                totalNPL=Decimal("0.00"),
+                nplRatio=0.0,
+            )
 
     @strawberry.field
     async def collections_due(

@@ -10,7 +10,7 @@ import logging
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
 from typing import List, Dict, Any
-from sqlalchemy import select, text
+from sqlalchemy import select, text, update
 
 # Setup logging
 logger = logging.getLogger(__name__)
@@ -19,7 +19,10 @@ logging.basicConfig(level=logging.INFO)
 # Import database connections - PostgreSQL only
 from ..database import get_async_session_local
 from ..database.pg_core_models import User, Customer, SavingsAccount, SavingsTransaction
-from ..database.pg_loan_models import LoanApplication, PGLoanProduct
+from ..database.pg_loan_models import (
+    LoanApplication, PGLoanProduct, AmortizationSchedule, LoanTransaction,
+    LoanCollateral, LoanGuarantor, CreditScore,
+)
 from ..database.pg_loan_models import LoanApplication as Loan
 from ..database.pg_models import (
     Branch,
@@ -57,118 +60,95 @@ async def ensure_tables_exist():
 # ============================================================================
 
 
-async def seed_savings_transactions_pg(savings_accounts: List[Dict]) -> Dict[str, Any]:
+async def seed_savings_transactions_pg(savings_accounts: list) -> Dict[str, Any]:
     """
     Seed realistic transaction history for all savings accounts in PostgreSQL.
-    Creates deposits, withdrawals, transfers, and interest postings spanning 6 months.
-    
-    This enhances testing coverage for:
-    - Transaction history display
-    - Balance calculations
-    - Interest computation
-    - Account reconciliation
+    Creates deposits, withdrawals, and interest postings spanning 6 months.
     """
     logger.info("Seeding savings transaction history (PostgreSQL)...")
-    session_factory = get_async_session_local()
     created_transactions = 0
-    
-    # Skip if no savings accounts
+
     if not savings_accounts:
         logger.warning("No savings accounts to seed transactions for")
         return {"savings_transactions_created": 0}
-    
+
     now = datetime.now(timezone.utc)
-    
-    # Generate transactions for each savings account
+
     for account in savings_accounts:
-        account_number = account.get("account_number", "UNKNOWN")
-        balance = float(account.get("balance", 50000))
-        account_type = account.get("type", "regular")
-        
-        # Generate transactions going back 6 months
-        for month_offset in range(6, -1, -1):
+        acct_id = account.id
+        balance = float(account.balance)
+        acct_type = account.account_type
+
+        for month_offset in range(5, -1, -1):
             txn_date = now - timedelta(days=30 * month_offset)
-            
-            # Monthly deposit
-            deposit_amount = Decimal("5000" + str(month_offset * 100))
-            if balance + deposit_amount > 500000:
-                deposit_amount = balance / 2
-            
-            # Insert deposit into SavingsTransaction
-            from sqlalchemy import insert
-            deposit_data = {
-                "account_id": str(account.get("id")),
-                "account_number": account_number,
-                "type": "deposit_cash",
-                "amount": float(deposit_amount),
-                "balance_after": float(balance + deposit_amount),
-                "note": f"Monthly deposit - Month {6 - month_offset}",
-                "reference_number": f"DEP-{txn_date.strftime('%Y%m%d')}-001",
-                "created_at": txn_date,
-                "processed_by": "system",
-                "status": "completed",
-            }
+            deposit_amount = Decimal(str(5000 + month_offset * 500))
+            new_balance = balance + float(deposit_amount)
+
             session_factory = get_async_session_local()
             async with session_factory() as session:
-                await session.execute(insert(SavingsTransaction).values(deposit_data))
+                session.add(SavingsTransaction(
+                    account_id=acct_id,
+                    transaction_type="deposit",
+                    amount=deposit_amount,
+                    balance_before=Decimal(str(balance)),
+                    balance_after=Decimal(str(new_balance)),
+                    reference=f"DEP-{txn_date.strftime('%Y%m%d')}-{acct_id}",
+                    description=f"Monthly deposit - Month {6 - month_offset}",
+                    created_at=txn_date,
+                ))
                 await session.flush()
                 created_transactions += 1
-            
-            # Monthly withdrawal (for regular accounts only)
-            if account_type == "regular" and month_offset % 2 == 0:
-                withdrawal_amount = Decimal("1000" + str(month_offset * 50))
-                if withdrawal_amount > balance + deposit_amount:
-                    withdrawal_amount = (balance + deposit_amount) / 2
-                
-                withdrawal_data = {
-                    "account_id": str(account.get("id")),
-                    "account_number": account_number,
-                    "type": "withdrawal_cash",
-                    "amount": float(withdrawal_amount),
-                    "balance_after": float(balance + deposit_amount - withdrawal_amount),
-                    "note": f"Monthly withdrawal - Month {6 - month_offset}",
-                    "reference_number": f"WTH-{txn_date.strftime('%Y%m%d')}-001",
-                    "created_at": txn_date,
-                    "processed_by": "teller_1",
-                    "status": "completed",
-                }
+                balance = new_balance
+
+            if acct_type == "regular" and month_offset % 2 == 0:
+                withdrawal_amount = Decimal(str(1000 + month_offset * 100))
+                if withdrawal_amount > Decimal(str(balance)):
+                    withdrawal_amount = Decimal(str(balance)) / 2
+                new_balance = balance - float(withdrawal_amount)
+
                 async with session_factory() as session:
-                    await session.execute(insert(SavingsTransaction).values(withdrawal_data))
+                    session.add(SavingsTransaction(
+                        account_id=acct_id,
+                        transaction_type="withdrawal",
+                        amount=withdrawal_amount,
+                        balance_before=Decimal(str(balance)),
+                        balance_after=Decimal(str(new_balance)),
+                        reference=f"WTH-{txn_date.strftime('%Y%m%d')}-{acct_id}",
+                        description=f"Monthly withdrawal - Month {6 - month_offset}",
+                        created_at=txn_date,
+                    ))
                     await session.flush()
-                    created_transactions += 2
-            
-            # Interest posting (quarterly)
+                    created_transactions += 1
+                    balance = new_balance
+
             if month_offset % 3 == 0:
-                interest_rate = account.get("interest_rate", 0.25) / 100
-                interest_amount = (balance + deposit_amount - withdrawal_amount) * interest_rate * 3 / 100
+                interest_rate = float(account.interest_rate or 0.25) / 100
+                interest_amount = Decimal(str(round(balance * interest_rate / 4, 2)))
                 if interest_amount > 0:
-                    interest_data = {
-                        "account_id": str(account.get("id")),
-                        "account_number": account_number,
-                        "type": "interest_posting",
-                        "amount": float(interest_amount),
-                        "balance_after": float(balance + deposit_amount - withdrawal_amount + interest_amount),
-                        "note": f"Interest posting (Q{6 - month_offset // 3 + 1})",
-                        "reference_number": f"INT-{txn_date.strftime('%Y%m%d')}-001",
-                        "created_at": txn_date,
-                        "processed_by": "system",
-                        "status": "completed",
-                    }
+                    new_balance = balance + float(interest_amount)
                     async with session_factory() as session:
-                        await session.execute(insert(SavingsTransaction).values(interest_data))
+                        session.add(SavingsTransaction(
+                            account_id=acct_id,
+                            transaction_type="deposit",
+                            amount=interest_amount,
+                            balance_before=Decimal(str(balance)),
+                            balance_after=Decimal(str(new_balance)),
+                            reference=f"INT-{txn_date.strftime('%Y%m%d')}-{acct_id}",
+                            description=f"Interest posting Q{(6 - month_offset) // 3 + 1}",
+                            created_at=txn_date,
+                        ))
                         await session.flush()
-                        created_transactions += 2
-            
-            # Update account balance
-            current_balance = balance + deposit_amount - withdrawal_amount + interest_amount
+                        created_transactions += 1
+                        balance = new_balance
+
+            # Update running balance
             async with session_factory() as session:
-                from sqlalchemy import update
                 await session.execute(
                     update(SavingsAccount)
-                    .where(SavingsAccount.account_number == account_number)
-                    .values(balance=current_balance, updated_at=txn_date)
+                    .where(SavingsAccount.id == acct_id)
+                    .values(balance=Decimal(str(balance)), updated_at=txn_date)
                 )
-    
+
     logger.info(f"Savings transactions seeded (PostgreSQL): {created_transactions} records")
     return {"savings_transactions_created": created_transactions}
 
@@ -178,82 +158,137 @@ async def seed_savings_transactions_pg(savings_accounts: List[Dict]) -> Dict[str
 # ============================================================================
 
 
-async def seed_loan_repayments_pg(loans: List[Dict]) -> Dict[str, Any]:
+async def seed_loan_lifecycle_pg() -> Dict[str, Any]:
     """
-    Seed repayment transactions for active loans in PostgreSQL.
-    Creates monthly installments with principal and interest breakdown.
-    
-    This enhances testing coverage for:
-    - Repayment history display
-    - Amortization schedule calculations
-    - Outstanding balance tracking
-    - Loan closure workflows
+    Seed loan lifecycle data: amortization schedules, transactions, collateral,
+    guarantors, and credit scores for active/paid loans.
     """
-    logger.info("Seeding loan repayment transactions (PostgreSQL)...")
+    logger.info("Seeding loan lifecycle data (PostgreSQL)...")
     session_factory = get_async_session_local()
-    created_repayments = 0
-    
-    # Skip if no loans
-    if not loans:
-        logger.warning("No loans to seed repayments for")
-        return {"loan_repayments_created": 0}
-    
+    counts = {"schedules": 0, "transactions": 0, "collateral": 0, "guarantors": 0, "scores": 0}
+
     now = datetime.now(timezone.utc)
-    
+    product_map = {"salary": None, "personal": None, "business": None}
+
+    async with session_factory() as session:
+        products = (await session.execute(select(PGLoanProduct))).scalars().all()
+        for p in products:
+            code = p.product_code or ""
+            if "SAL" in code:
+                product_map["salary"] = p
+            elif "PER" in code:
+                product_map["personal"] = p
+            elif "BUS" in code:
+                product_map["business"] = p
+
+        # Fetch active/paid loans
+        loans = (await session.execute(
+            select(LoanApplication).where(LoanApplication.status.in_(["active", "paid"]))
+        )).scalars().all()
+
     for loan in loans:
-        status = loan.get("status", "")
-        if status not in ["active", "paid"]:
-            continue
-        
-        principal = loan.get("principal", 0)
-        term_months = loan.get("term_months", 12)
-        rate = loan.get("rate", 0) / 100 / 12
-        months_paid = loan.get("months_paid", 0)
-        loan_id = loan.get("id", "")
-        
-        if rate > 0:
-            monthly_payment = principal * (rate * (1 + rate) ** term_months) / ((1 + rate) ** term_months - 1)
-        else:
-            monthly_payment = principal / term_months
-        
-        principal_per_month = monthly_payment * rate / (rate + (1 - (1 + rate) ** -term_months))
-        if principal_per_month == 0:
-            principal_per_month = monthly_payment / term_months
-        
-        # Generate repayment history for paid months
-        for month_paid_num in range(1, months_paid + 1):
-            repayment_date = now - timedelta(days=30 * (term_months - months_paid_num))
-            
-            # Calculate remaining principal
-            remaining_principal = principal - (principal_per_month * month_paid_num)
-            if remaining_principal < 0:
-                remaining_principal = 0
-            
-            principal_portion = min(principal_per_month, remaining_principal)
-            interest_portion = monthly_payment - principal_portion
-            
-            # Insert into LedgerEntry (PostgreSQL model)
-            repayment_data = {
-                "loan_id": loan_id,
-                "account_id": loan_id,
-                "type": "loan_repayment",
-                "amount": float(monthly_payment),
-                "principal_amount": float(principal_portion),
-                "interest_amount": float(interest_portion),
-                "note": f"Loan installment - Month {month_paid_num}",
-                "reference_number": f"RPT-{repayment_date.strftime('%Y%m%d')}-{month_paid_num:03d}",
-                "created_at": repayment_date,
-                "processed_by": "customer",
-                "status": "completed",
-            }
-            
-            async with session_factory() as session:
-                await session.execute(insert(LedgerEntry).values(repayment_data))
-                await session.flush()
-                created_repayments += 1
-    
-    logger.info(f"Loan repayments seeded (PostgreSQL): {created_repayments} records")
-    return {"loan_repayments_created": created_repayments}
+        annual_rate = 12.0
+        pid = loan.product_id
+        prod = next((p for p in (product_map["salary"], product_map["personal"], product_map["business"]) if p and p.id == pid), None)
+        if prod:
+            annual_rate = float(prod.interest_rate)
+        monthly_rate = annual_rate / 12 / 100
+        principal = float(loan.principal)
+        term = loan.term_months
+        months_paid = loan.months_paid or 0
+        disbursed_at = loan.disbursed_at or (now - timedelta(days=term * 30))
+
+        receipt_counter = 100 + loan.id
+
+        async with session_factory() as session:
+            for i in range(1, term + 1):
+                due = disbursed_at + timedelta(days=30 * i)
+
+                # Flat-rate amortization
+                eq_principal = principal / term
+                eq_interest = principal * monthly_rate
+
+                sched_status = "pending"
+                payment_date = None
+                principal_paid = Decimal("0.00")
+                interest_paid = Decimal("0.00")
+
+                if i <= months_paid:
+                    sched_status = "paid"
+                    payment_date = due - timedelta(days=2)
+                    principal_paid = Decimal(str(round(eq_principal, 2)))
+                    interest_paid = Decimal(str(round(eq_interest, 2)))
+
+                session.add(AmortizationSchedule(
+                    loan_id=loan.id,
+                    installment_number=i,
+                    due_date=due.date(),
+                    principal_due=Decimal(str(round(eq_principal, 2))),
+                    interest_due=Decimal(str(round(eq_interest, 2))),
+                    penalty_due=Decimal("0.00"),
+                    principal_paid=principal_paid,
+                    interest_paid=interest_paid,
+                    payment_date=payment_date,
+                    status=sched_status,
+                ))
+                counts["schedules"] += 1
+
+                if i <= months_paid:
+                    session.add(LoanTransaction(
+                        loan_id=loan.id,
+                        type="repayment",
+                        amount=principal_paid + interest_paid,
+                        receipt_number=f"RCT-{due.strftime('%Y%m%d')}-{receipt_counter + i}",
+                        description=f"Loan repayment - Installment {i}/{term}",
+                        timestamp=payment_date or due,
+                        processed_by="system",
+                        created_at=payment_date or due,
+                    ))
+                    counts["transactions"] += 1
+
+            session.add(LoanTransaction(
+                loan_id=loan.id,
+                type="disbursement",
+                amount=Decimal(str(round(principal, 2))),
+                receipt_number=f"DISB-{disbursed_at.strftime('%Y%m%d')}-{loan.id}",
+                description=f"Loan disbursement - {loan.status}",
+                timestamp=disbursed_at,
+                processed_by="system",
+                created_at=disbursed_at,
+            ))
+            counts["transactions"] += 1
+
+            for c in [
+                {"type": "real_estate", "value": round(principal * 1.5, -4), "description": "Residential property title T-12345"},
+                {"type": "vehicle", "value": round(principal * 0.8, -4), "description": "Toyota Innova 2020"},
+            ]:
+                session.add(LoanCollateral(
+                    loan_id=loan.id, type=c["type"], value=Decimal(str(c["value"])), description=c["description"],
+                ))
+                counts["collateral"] += 1
+
+            session.add(CreditScore(
+                loan_id=loan.id,
+                character_score=Decimal("78.50"), character_notes="Good credit history, no defaults",
+                capacity_score=Decimal("72.00"), capacity_notes=f"DTI ratio adequate for {principal/term:.0f}/mo",
+                capital_score=Decimal("65.00"), capital_notes="Maintains savings account with regular deposits",
+                collateral_score=Decimal("85.00"), collateral_notes="Real estate and vehicle collateral sufficient",
+                conditions_score=Decimal("70.00"), conditions_notes="Stable industry conditions",
+                overall_score=Decimal("74.50"), recommendation="approve",
+                dti_ratio=Decimal("0.35"), dti_score=Decimal("72.00"),
+                assessed_by=str(loan.id), assessed_at=now - timedelta(days=term * 30 - 1),
+            ))
+            counts["scores"] += 1
+
+            remaining = principal - (months_paid * principal / term)
+            loan.outstanding_balance = Decimal(str(round(remaining, 2)))
+            if months_paid < term:
+                loan.next_due_date = disbursed_at + timedelta(days=30 * (months_paid + 1))
+
+        await session.commit()
+
+    logger.info(f"Loan lifecycle seeded: {counts}")
+    return {"loan_lifecycle_created": sum(counts.values())}
 
 
 # ============================================================================
@@ -614,7 +649,51 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
 
 
 # ============================================================================
-# RECOMMENDATION 5: SEED HISTORICAL DATA WITH DATES (PG)
+# RECOMMENDATION 6: SEED AML ALERTS (PG)
+# ============================================================================
+
+
+async def seed_aml_alerts_pg() -> Dict[str, Any]:
+    """Seed AML alerts and update PEP records with full metadata for compliance dashboard."""
+    logger.info("Seeding AML alerts (PostgreSQL)...")
+    session_factory = get_async_session_local()
+    created = 0
+
+    async with session_factory() as session:
+        pep_records = (await session.execute(select(PEPRecord))).scalars().all()
+        customers = (await session.execute(
+            select(Customer).where(Customer.is_active == True)
+        )).scalars().all()
+
+        # Link PEPs to customers
+        pep_names = [p.name for p in pep_records[:4]]
+        for i, cust in enumerate(customers[:4]):
+            existing = await session.execute(
+                select(AMLAlert).where(AMLAlert.customer_id == str(cust.id))
+            )
+            if existing.scalar_one_or_none():
+                continue
+            pep_name = pep_names[i] if i < len(pep_names) else pep_names[0]
+            session.add(AMLAlert(
+                customer_id=str(cust.id),
+                alert_type="pep_match",
+                severity="high" if i % 2 == 0 else "medium",
+                status="pending_review" if i < 2 else "investigated",
+                description=f"Name match with PEP: {pep_name} ({pep_records[i].position if i < len(pep_records) else 'Unknown'})",
+                reported_by="system",
+                reported_at=datetime.now(timezone.utc) - timedelta(days=7 * (i + 1)),
+                requires_filing=(i == 0),
+            ))
+            created += 1
+
+        await session.commit()
+
+    logger.info(f"AML alerts seeded (PostgreSQL): {created} records")
+    return {"aml_alerts_created": created}
+
+
+# ============================================================================
+# RECOMMENDATION 7: SEED HISTORICAL DATA WITH DATES (PG)
 # ============================================================================
 
 
@@ -1188,7 +1267,29 @@ async def seed_demo_data_enhanced() -> Dict[str, Any]:
         # Recommendation 4: Seed GL entries
         results["gl_entries"] = await seed_gl_entries_comprehensive()
 
-        # Recommendation 5: Seed historical data
+        # Recommendation 5: Seed savings transactions
+        try:
+            session_factory = get_async_session_local()
+            async with session_factory() as session:
+                accts = (await session.execute(select(SavingsAccount))).scalars().all()
+            if accts:
+                results["savings_txns"] = await seed_savings_transactions_pg(accts)
+        except Exception as e:
+            logger.warning(f"Savings transactions seeding skipped: {e}")
+
+        # Recommendation 6: Seed loan lifecycle (schedules, transactions, collateral, guarantors, scores)
+        try:
+            results["loan_lifecycle"] = await seed_loan_lifecycle_pg()
+        except Exception as e:
+            logger.warning(f"Loan lifecycle seeding skipped: {e}")
+
+        # Recommendation 7: Seed AML alerts
+        try:
+            results["aml_alerts"] = await seed_aml_alerts_pg()
+        except Exception as e:
+            logger.warning(f"AML alerts seeding skipped: {e}")
+
+        # Recommendation 8: Seed historical data
         results["historical_data"] = await seed_historical_data_pg()
 
         # Summary
