@@ -225,6 +225,7 @@ class APAgingRow:
     daysPastDue: int
     customerName: Optional[str] = None
     loanId: Optional[str] = None
+    buckets: List[ARAgingBucket]
 
     @strawberry.field
     def totalBalance(self) -> Decimal:
@@ -514,6 +515,7 @@ async def resolve_ap_aging(
             referenceNo=f"LOAN-{r.id}", branchCode=r.branch_code or "", amount=outstanding,
             dueDate=created, agingBucket=bucket_label, daysPastDue=dpd,
             customerName=r.display_name or f"Customer {r.customer_id}", loanId=str(r.id),
+            buckets=[],
         ))
         bucket_totals[bucket] += outstanding
         grand_total += outstanding
