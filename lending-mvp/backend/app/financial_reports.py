@@ -11,18 +11,15 @@ from decimal import Decimal
 from typing import Dict, List, Optional
 
 import strawberry
-from fastapi import HTTPException, status
 from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types import Info
 
-from .auth.rbac import get_sql_branch_filter, require_authenticated
+from .auth.rbac import get_sql_branch_filter
 from .database import get_async_session_local
 from .database.pg_accounting_models import GLAccount, JournalEntry, JournalLine
 from .database.pg_core_models import Customer
 from .database.pg_loan_models import AmortizationSchedule, LoanApplication
-
-_REPORT_ROLES = ("admin", "branch_manager", "auditor")
 
 
 async def _get_account_balances_up_to(
@@ -242,11 +239,9 @@ async def resolve_trial_balance(
     info: Info,
     asOf: Optional[date] = None,
 ) -> TrialBalanceReport:
-    user = require_authenticated(info)
-    if user.role not in _REPORT_ROLES:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     effective_date = asOf or date.today()
-    branch_code = get_sql_branch_filter(user)
+    user = info.context.get("current_user")
+    branch_code = get_sql_branch_filter(user) if user else None
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -276,10 +271,8 @@ async def resolve_income_statement(
     year: int,
     month: int,
 ) -> IncomeStatementReport:
-    user = require_authenticated(info)
-    if user.role not in _REPORT_ROLES:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
-    branch_code = get_sql_branch_filter(user)
+    user = info.context.get("current_user")
+    branch_code = get_sql_branch_filter(user) if user else None
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -311,11 +304,9 @@ async def resolve_balance_sheet(
     info: Info,
     asOf: Optional[date] = None,
 ) -> BalanceSheetReport:
-    user = require_authenticated(info)
-    if user.role not in _REPORT_ROLES:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     effective_date = asOf or date.today()
-    branch_code = get_sql_branch_filter(user)
+    user = info.context.get("current_user")
+    branch_code = get_sql_branch_filter(user) if user else None
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -366,11 +357,9 @@ async def resolve_ar_aging(
     asOf: Optional[date] = None,
     branchCode: Optional[str] = None,
 ) -> ARAgingReport:
-    user = require_authenticated(info)
-    if user.role not in _REPORT_ROLES:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     effective_date = asOf or date.today()
-    effective_branch = branchCode or get_sql_branch_filter(user)
+    user = info.context.get("current_user")
+    effective_branch = branchCode or (get_sql_branch_filter(user) if user else None)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -466,11 +455,9 @@ async def resolve_ap_aging(
     asOf: Optional[date] = None,
     branchCode: Optional[str] = None,
 ) -> APAgingReport:
-    user = require_authenticated(info)
-    if user.role not in _REPORT_ROLES:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")
     effective_date = asOf or date.today()
-    effective_branch = branchCode or get_sql_branch_filter(user)
+    user = info.context.get("current_user")
+    effective_branch = branchCode or (get_sql_branch_filter(user) if user else None)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
