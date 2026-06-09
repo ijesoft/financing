@@ -320,13 +320,6 @@ async def resolve_balance_sheet(
     session_factory = get_async_session_local()
     async with session_factory() as session:
         balances = await _get_account_balances_up_to(session, effective_date, branch_code)
-        current_year = effective_date.year
-        current_month = effective_date.month
-        period_balances = await _get_period_balances(session, current_year, current_month, branch_code)
-
-    period_revenue = sum(b["balance"] for b in period_balances.values() if b["type"] == "income")
-    period_expenses = sum(b["balance"] for b in period_balances.values() if b["type"] == "expense")
-    current_period_net_income = period_revenue - period_expenses
 
     asset_rows: List[BalanceSheetRow] = []
     liability_rows: List[BalanceSheetRow] = []
@@ -335,6 +328,8 @@ async def resolve_balance_sheet(
     total_liabilities = Decimal("0.00")
     total_equity = Decimal("0.00")
 
+    accumulated_income = Decimal("0.00")
+    accumulated_expense = Decimal("0.00")
     for code in sorted(balances.keys(), key=lambda c: int(c) if c.isdigit() else c):
         b = balances[code]
         row = BalanceSheetRow(code=b["code"], name=b["name"], balance=b["balance"])
@@ -345,13 +340,17 @@ async def resolve_balance_sheet(
             liability_rows.append(row)
             total_liabilities += b["balance"]
         elif b["type"] == "equity":
-            if b["code"] == "3100":
-                adjusted = b["balance"] + current_period_net_income
-                row = BalanceSheetRow(code=b["code"], name=b["name"], balance=adjusted)
-                total_equity += adjusted
-            else:
-                equity_rows.append(row)
-                total_equity += b["balance"]
+            equity_rows.append(row)
+            total_equity += b["balance"]
+        elif b["type"] == "income":
+            accumulated_income += b["balance"]
+        elif b["type"] == "expense":
+            accumulated_expense += b["balance"]
+
+    retained_earnings = accumulated_income - accumulated_expense
+    if retained_earnings != 0:
+        equity_rows.append(BalanceSheetRow(code="3100", name="Retained Earnings", balance=retained_earnings))
+        total_equity += retained_earnings
 
     return BalanceSheetReport(
         asOf=effective_date,

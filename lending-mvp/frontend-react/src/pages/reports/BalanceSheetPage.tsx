@@ -8,14 +8,19 @@ interface BalanceSheetRow {
 }
 
 interface BalanceSheetSection {
-    sectionName: string
+    label: string
     total: number
     rows: BalanceSheetRow[]
 }
 
 interface BalanceSheetReport {
     asOf: string
-    sections: BalanceSheetSection[]
+    assets: BalanceSheetSection
+    liabilities: BalanceSheetSection
+    equity: BalanceSheetSection
+    totalAssets: number
+    totalLiabilities: number
+    totalEquity: number
 }
 
 function fetchGraphQL(query: string, variables: Record<string, any> = {}) {
@@ -39,7 +44,7 @@ export default function BalanceSheetPage() {
         try {
             const result = await fetchGraphQL(
                 `query BalanceSheet($asOf: Date) {
-                    balanceSheet(asOf: $asOf) { asOf sections { sectionName total rows { code name balance } } }
+                    balanceSheet(asOf: $asOf) { asOf totalAssets totalLiabilities totalEquity assets { label total rows { code name balance } } liabilities { label total rows { code name balance } } equity { label total rows { code name balance } } }
                 }`, { asOf }
             )
             if (result.errors) throw new Error(result.errors[0].message)
@@ -80,7 +85,7 @@ export default function BalanceSheetPage() {
 
             {loading ? (
                 <div className="flex items-center justify-center py-16 text-slate-400"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading balance sheet...</div>
-            ) : !data || data.sections.every(s => s.rows.length === 0) ? (
+            ) : !data || (data.assets.rows.length === 0 && data.liabilities.rows.length === 0 && data.equity.rows.length === 0) ? (
                 <div className="text-center py-16 text-slate-400">No data as of {asOf}.</div>
             ) : (
                 <div className="glass rounded-xl overflow-hidden border border-slate-700/50">
@@ -93,12 +98,12 @@ export default function BalanceSheetPage() {
                             </tr>
                         </thead>
                         <tbody>
-                            {data.sections.map((section, si) => (
+                            {([data.assets, data.liabilities, data.equity] as BalanceSheetSection[]).map((section, si) => (
                                 <Fragment key={si}>
                                     <tr className="bg-slate-800/30">
                                         <td colSpan={3} className="px-4 py-2 text-xs font-semibold uppercase tracking-wider"
-                                            style={{ color: section.sectionName === 'Assets' ? 'rgb(96 165 250)' : section.sectionName === 'Liabilities' ? 'rgb(251 146 60)' : 'rgb(52 211 153)' }}>
-                                            {section.sectionName}
+                                            style={{ color: section.label === 'Assets' ? 'rgb(96 165 250)' : section.label === 'Liabilities' ? 'rgb(251 146 60)' : 'rgb(52 211 153)' }}>
+                                            {section.label}
                                         </td>
                                     </tr>
                                     {section.rows.map(row => (
@@ -109,7 +114,7 @@ export default function BalanceSheetPage() {
                                         </tr>
                                     ))}
                                     <tr className="bg-slate-800/40 font-semibold border-b border-slate-700/50">
-                                        <td colSpan={2} className="px-4 py-3 text-right text-white">Total {section.sectionName}</td>
+                                        <td colSpan={2} className="px-4 py-3 text-right text-white">Total {section.label}</td>
                                         <td className="px-4 py-3 text-right font-mono text-white" style={{ borderTop: '2px solid rgb(148 163 184 / 0.3)' }}>{fmt(section.total)}</td>
                                     </tr>
                                 </Fragment>
@@ -120,7 +125,7 @@ export default function BalanceSheetPage() {
                                 <td colSpan={2} className="px-4 py-4 text-right text-white uppercase">Total Liabilities &amp; Equity</td>
                                 <td className="px-4 py-4 text-right font-mono text-lg text-emerald-400"
                                     style={{ borderTop: '3px double rgb(148 163 184 / 0.5)' }}>
-                                    {data.sections.length >= 2 ? fmt(data.sections.slice(1).reduce((sum, s) => sum + s.total, 0)) : '\u2014'}
+                                    {fmt(Number(data.totalLiabilities) + Number(data.totalEquity))}
                                 </td>
                             </tr>
                         </tfoot>

@@ -68,7 +68,6 @@ from .financial_reports import (
     resolve_ar_aging,
     resolve_ap_aging,
 )
-)
 from .database.pg_models import (
     CustomerActivity,
     Collection,
@@ -130,6 +129,12 @@ class Health:
 class DashboardStats:
     customersTotal: int
     loansTotal: int
+    activeLoans: int
+    totalPortfolio: Decimal
+    overdueLoans: int
+    totalCollections: Decimal
+    collectedThisMonth: Decimal
+    totalOutstanding: Decimal
 
 
 @strawberry.type
@@ -1531,6 +1536,7 @@ class Query:
                         interestPaid=item.interest_paid,
                         penaltyPaid=item.penalty_paid,
                         status=item.status,
+                        paymentDate=item.payment_date,
                         totalDue=item.principal_due + item.interest_due + item.penalty_due,
                         totalPaid=item.principal_paid + item.interest_paid + item.penalty_paid,
                     )
@@ -1806,7 +1812,55 @@ class Query:
             loan_count = (
                 await session.execute(select(func.count(LoanApplication.id)))
             ).scalar() or 0
-            return DashboardStats(customersTotal=customer_count, loansTotal=loan_count)
+            active_count = (
+                await session.execute(
+                    select(func.count(LoanApplication.id)).where(LoanApplication.status == "active")
+                )
+            ).scalar() or 0
+            portfolio = (
+                await session.execute(
+                    select(func.coalesce(func.sum(LoanApplication.approved_principal), 0))
+                    .where(LoanApplication.status == "active")
+                )
+            ).scalar() or Decimal("0.00")
+            outstanding = (
+                await session.execute(
+                    select(func.coalesce(func.sum(LoanApplication.outstanding_balance), 0))
+                    .where(LoanApplication.status == "active")
+                )
+            ).scalar() or Decimal("0.00")
+            now = datetime.now()
+            overdue_count = (
+                await session.execute(
+                    select(func.count(AmortizationSchedule.id))
+                    .where(AmortizationSchedule.status != "paid")
+                    .where(AmortizationSchedule.due_date < now)
+                )
+            ).scalar() or 0
+            total_collections = (
+                await session.execute(
+                    select(func.coalesce(func.sum(Collection.amount), 0))
+                    .where(Collection.status == "collected")
+                )
+            ).scalar() or Decimal("0.00")
+            month_start = now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
+            collected_this_month = (
+                await session.execute(
+                    select(func.coalesce(func.sum(Collection.amount), 0))
+                    .where(Collection.status == "collected")
+                    .where(Collection.collection_date >= month_start)
+                )
+            ).scalar() or Decimal("0.00")
+            return DashboardStats(
+                customersTotal=customer_count,
+                loansTotal=loan_count,
+                activeLoans=active_count,
+                totalPortfolio=portfolio,
+                overdueLoans=overdue_count,
+                totalCollections=total_collections,
+                collectedThisMonth=collected_this_month,
+                totalOutstanding=outstanding,
+            )
 
 
 @strawberry.type

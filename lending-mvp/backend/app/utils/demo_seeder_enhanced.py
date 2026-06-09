@@ -465,6 +465,7 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
         ("2000", "Accounts Payable / Accrued Liabilities", "liability"),
         ("2100", "Customer Deposits", "liability"),
         ("3000", "Share Capital", "equity"),
+        ("3100", "Retained Earnings", "equity"),
         ("4100", "Interest Income", "income"),
         ("4200", "Fee Income", "income"),
         ("4300", "Other Income", "income"),
@@ -497,6 +498,8 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
             # Interest Income Entry
             interest_entry = JournalEntry(
                 timestamp=month_date,
+                value_date=month_date.date(),
+                branch_code="BR-MAK",
                 description=f"Interest Income - {month_name}",
                 reference_no=f"INT-{month_offset:03d}-{now.timestamp()}"
             )
@@ -517,6 +520,8 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
             # Fee Income Entry
             fee_entry = JournalEntry(
                 timestamp=month_date,
+                value_date=month_date.date(),
+                branch_code="BR-MAK",
                 description=f"Loan Fee Income - {month_name}",
                 reference_no=f"FEE-{month_offset:03d}-{now.timestamp()}"
             )
@@ -537,6 +542,8 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
             # Operating Expenses Entry
             op_exp_entry = JournalEntry(
                 timestamp=month_date,
+                value_date=month_date.date(),
+                branch_code="BR-MAK",
                 description=f"Operating Expenses - {month_name}",
                 reference_no=f"EXP-{month_offset:03d}-{now.timestamp()}"
             )
@@ -557,6 +564,8 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
             # Interest Expense Entry
             interest_exp_entry = JournalEntry(
                 timestamp=month_date,
+                value_date=month_date.date(),
+                branch_code="BR-MAK",
                 description=f"Interest Expense - {month_name}",
                 reference_no=f"INTX-{month_offset:03d}-{now.timestamp()}"
             )
@@ -577,6 +586,8 @@ async def seed_gl_entries_comprehensive() -> Dict[str, Any]:
             # Provision for Loan Losses Entry
             provision_entry = JournalEntry(
                 timestamp=month_date,
+                value_date=month_date.date(),
+                branch_code="BR-MAK",
                 description=f"Provision for Loan Losses - {month_name}",
                 reference_no=f"PROV-{month_offset:03d}-{now.timestamp()}"
             )

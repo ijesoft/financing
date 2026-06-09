@@ -1,10 +1,8 @@
-import { gql } from '@apollo/client'
 import { useState } from 'react'
 import { useParams, Link } from 'react-router-dom'
-import { useQuery } from '@apollo/client'
-import { GET_LOAN, GET_LOAN_AMORTIZATION } from '@/api/queries'
+import { useQuery } from '@tanstack/react-query'
 import { formatDate } from '@/lib/utils'
-import { Calculator, Loader2, ArrowLeft, Printer, History } from 'lucide-react'
+import { Loader2, ArrowLeft, Printer, History } from 'lucide-react'
 
 const safeFormatCurrency = (value: any) => {
     try {
@@ -49,22 +47,38 @@ interface AmortizationRow {
     totalPaid: number | string
 }
 
+const LOAN_QUERY = `query GetLoan($id: ID!) { loan(id: $id) { id customerId productId principal termMonths approvedPrincipal approvedRate status createdAt disbursedAt outstandingBalance borrowerName productName } }`
+const AMORT_QUERY = `query GetLoanAmortization($loanId: ID!) { loanAmortization(loanId: $loanId) { rows { installmentNumber dueDate principalDue interestDue penaltyDue principalPaid interestPaid penaltyPaid paymentDate status totalDue totalPaid } } }`
+
+function fetchGraphQL<T>(query: string, variables: Record<string, any>): Promise<T> {
+    const token = localStorage.getItem('access_token')
+    return fetch('/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: token ? `Bearer ${token}` : '' },
+        body: JSON.stringify({ query, variables }),
+    }).then(res => res.json())
+}
+
 export default function PaymentHistoryPage() {
     const { id } = useParams<{ id: string }>()
     const [showAll, setShowAll] = useState(true)
 
-    const { data: loanData, loading: loanLoading, error: loanError } = useQuery(gql(GET_LOAN), {
-        variables: { id },
-        skip: !id
+    const { data: loanData, isLoading: loanLoading, error: loanError } = useQuery({
+        queryKey: ['loan', id],
+        queryFn: () => fetchGraphQL<any>(LOAN_QUERY, { id }),
+        enabled: !!id,
+        staleTime: 60000,
     })
 
-    const { data: amortizationData, loading: amortizationLoading, error: amortizationError } = useQuery(gql(GET_LOAN_AMORTIZATION), {
-        variables: { loanId: id },
-        skip: !id
+    const { data: amortizationData, isLoading: amortizationLoading, error: amortizationError } = useQuery({
+        queryKey: ['loanAmortization', id],
+        queryFn: () => fetchGraphQL<any>(AMORT_QUERY, { loanId: id }),
+        enabled: !!id,
+        staleTime: 60000,
     })
 
-    const loan: LoanDetail = loanData?.loan
-    const amortizationRows: AmortizationRow[] = amortizationData?.loanAmortization?.rows || []
+    const loan: LoanDetail | undefined = loanData?.data?.loan
+    const amortizationRows: AmortizationRow[] = amortizationData?.data?.loanAmortization?.rows || []
 
     const principal = parseFloat(String(loan?.approvedPrincipal || loan?.principal || 0))
     const annualRatePercent = parseFloat(String(loan?.approvedRate || 0))

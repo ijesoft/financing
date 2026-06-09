@@ -4,16 +4,16 @@ import { FileText, Loader2, AlertCircle } from 'lucide-react'
 interface IncomeStatementRow {
     code: string
     name: string
-    type: string
     balance: number
 }
 
 interface IncomeStatementReport {
     year: number
     month: number
-    rows: IncomeStatementRow[]
-    totalIncome: number
-    totalExpense: number
+    revenueRows: IncomeStatementRow[]
+    totalRevenue: number
+    expenseRows: IncomeStatementRow[]
+    totalExpenses: number
     netIncome: number
 }
 
@@ -42,7 +42,7 @@ export default function IncomeStatementPage() {
         try {
             const result = await fetchGraphQL(
                 `query IncomeStatement($year: Int!, $month: Int!) {
-                    incomeStatement(year: $year, month: $month) { year month totalIncome totalExpense netIncome rows { code name type balance } }
+                    incomeStatement(year: $year, month: $month) { year month totalRevenue totalExpenses netIncome revenueRows { code name balance } expenseRows { code name balance } }
                 }`, { year, month }
             )
             if (result.errors) throw new Error(result.errors[0].message)
@@ -58,8 +58,8 @@ export default function IncomeStatementPage() {
 
     const fmt = (n: number) => new Intl.NumberFormat('en-PH', { style: 'currency', currency: 'PHP', minimumFractionDigits: 2 }).format(n)
 
-    const incomeRows = data?.rows.filter(r => r.type === 'income') || []
-    const expenseRows = data?.rows.filter(r => r.type === 'expense') || []
+    const incomeRows = data?.revenueRows || []
+    const expenseRows = data?.expenseRows || []
 
     return (
         <div className="min-h-screen bg-gradient-to-br from-slate-900 via-slate-800 to-slate-900 space-y-6 p-6">
@@ -97,7 +97,7 @@ export default function IncomeStatementPage() {
 
             {loading ? (
                 <div className="flex items-center justify-center py-16 text-slate-400"><Loader2 className="w-5 h-5 animate-spin mr-2" />Loading income statement...</div>
-            ) : !data || data.rows.length === 0 ? (
+            ) : !data || (data.revenueRows.length === 0 && data.expenseRows.length === 0) ? (
                 <div className="text-center py-16 text-slate-400">No data for {MONTHS[month]} {year}.</div>
             ) : (
                 <div className="glass rounded-xl overflow-hidden border border-slate-700/50">
@@ -120,7 +120,7 @@ export default function IncomeStatementPage() {
                             ))}
                             <tr className="bg-slate-800/40 font-semibold border-b border-slate-700/50">
                                 <td colSpan={2} className="px-4 py-3 text-right text-green-400">Total Income</td>
-                                <td className="px-4 py-3 text-right font-mono text-green-400" style={{ borderTop: '2px solid rgb(34 197 94 / 0.5)' }}>{fmt(data.totalIncome)}</td>
+                                <td className="px-4 py-3 text-right font-mono text-green-400" style={{ borderTop: '2px solid rgb(34 197 94 / 0.5)' }}>{fmt(data.totalRevenue)}</td>
                             </tr>
                             <tr className="bg-slate-800/30"><td colSpan={3} className="px-4 py-2 text-xs font-semibold text-amber-400 uppercase tracking-wider">Expenses</td></tr>
                             {expenseRows.map(row => (
@@ -132,7 +132,7 @@ export default function IncomeStatementPage() {
                             ))}
                             <tr className="bg-slate-800/40 font-semibold border-b border-slate-700/50">
                                 <td colSpan={2} className="px-4 py-3 text-right text-red-400">Total Expenses</td>
-                                <td className="px-4 py-3 text-right font-mono text-red-400" style={{ borderTop: '2px solid rgb(248 113 113 / 0.5)' }}>{fmt(data.totalExpense)}</td>
+                                <td className="px-4 py-3 text-right font-mono text-red-400" style={{ borderTop: '2px solid rgb(248 113 113 / 0.5)' }}>{fmt(data.totalExpenses)}</td>
                             </tr>
                         </tbody>
                         <tfoot>

@@ -290,14 +290,14 @@ export default function AmortizationSchedulePage() {
                     </thead>
                     <tbody>
                         {/* Initial Balance Row */}
-                        <tr className="border-b border-gray-300 bg-gray-50">
+                        <tr className="border-b border-gray-300 bg-gradient-to-r from-gray-100 via-gray-50 to-gray-100">
                             <td className="px-3 py-2 text-center text-gray-500">-</td>
-                            <td className="px-3 py-2 text-gray-500">Starting Balance</td>
+                            <td className="px-3 py-2 text-gray-500 font-medium">Starting Balance</td>
                             <td className="px-3 py-2 text-right text-gray-500">-</td>
                             <td className="px-3 py-2 text-right text-gray-500">-</td>
                             <td className="px-3 py-2 text-right text-gray-500">-</td>
                             <td className="px-3 py-2 text-right text-gray-500">-</td>
-                            <td className="px-3 py-2 text-right font-medium text-yellow-400 border border-gray-300 bg-white">
+                            <td className="px-3 py-2 text-right font-bold text-gray-700 bg-gradient-to-r from-yellow-50 via-yellow-100 to-yellow-50">
                                 {safeFormatCurrency(principal)}
                             </td>
                         </tr>
