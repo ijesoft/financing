@@ -209,6 +209,10 @@ class ARAgingCustomerRow:
     totalDue: Decimal
     buckets: List[ARAgingBucket]
 
+    @strawberry.field
+    def totalBalance(self) -> Decimal:
+        return self.totalDue
+
 
 @strawberry.type
 class ARAgingReport:
