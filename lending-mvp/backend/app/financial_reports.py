@@ -226,6 +226,10 @@ class APAgingRow:
     customerName: Optional[str] = None
     loanId: Optional[str] = None
 
+    @strawberry.field
+    def totalBalance(self) -> Decimal:
+        return self.amount
+
 
 @strawberry.type
 class APAgingReport:
