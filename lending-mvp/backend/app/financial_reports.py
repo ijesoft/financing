@@ -500,9 +500,9 @@ async def resolve_ap_aging(
             stmt = stmt.where(LoanApplication.branch_code == effective_branch)
         rows = (await session.execute(stmt)).all()
 
-    ap_rows: List[APAgingRow] = []
-    bucket_totals = {"current": Decimal("0.00"), "1-30": Decimal("0.00"), "31-60": Decimal("0.00"), "61-90": Decimal("0.00"), "90+": Decimal("0.00")}
-    grand_total = Decimal("0.00")
+    branch_data: Dict[str, dict] = {}
+    bucket_keys = ["current", "1-30", "31-60", "61-90", "90+"]
+    bucket_labels = {"current": "Current", "1-30": "1-30 Days", "31-60": "31-60 Days", "61-90": "61-90 Days", "90+": "90+ Days"}
 
     for r in rows:
         approved = Decimal(str(r.approved_principal or 0))
@@ -510,26 +510,30 @@ async def resolve_ap_aging(
         outstanding = approved - disbursed
         if outstanding <= 0:
             continue
+        bc = r.branch_code or "Unknown"
+        if bc not in branch_data:
+            branch_data[bc] = {k: Decimal("0.00") for k in bucket_keys}
         created = r.created_at.date() if isinstance(r.created_at, datetime) else r.created_at
         dpd = max(0, (effective_date - created).days)
         bucket = "current" if dpd <= 0 else "1-30" if dpd <= 30 else "31-60" if dpd <= 60 else "61-90" if dpd <= 90 else "90+"
-        bucket_label = {"current": "Current", "1-30": "1-30 Days", "31-60": "31-60 Days", "61-90": "61-90 Days", "90+": "90+ Days"}[bucket]
+        branch_data[bc][bucket] += outstanding
 
+    ap_rows: List[APAgingRow] = []
+    bucket_totals = {k: Decimal("0.00") for k in bucket_keys}
+    grand_total = Decimal("0.00")
+
+    for bc, bkt in sorted(branch_data.items()):
+        buckets_list = [ARAgingBucket(label=bucket_labels[k], amount=bkt[k]) for k in bucket_keys]
+        branch_total = sum(bkt.values())
         ap_rows.append(APAgingRow(
-            referenceNo=f"LOAN-{r.id}", branchCode=r.branch_code or "", amount=outstanding,
-            dueDate=created, agingBucket=bucket_label, daysPastDue=dpd,
-            customerName=r.display_name or f"Customer {r.customer_id}", loanId=str(r.id),
-            buckets=[],
+            referenceNo="", branchCode=bc, amount=branch_total,
+            dueDate=effective_date, agingBucket="", daysPastDue=0,
+            buckets=buckets_list,
         ))
-        bucket_totals[bucket] += outstanding
-        grand_total += outstanding
+        for k in bucket_keys:
+            bucket_totals[k] += bkt[k]
+        grand_total += branch_total
 
-    bucket_total_list = [
-        ARAgingBucket(label="Current", amount=bucket_totals["current"]),
-        ARAgingBucket(label="1-30 Days", amount=bucket_totals["1-30"]),
-        ARAgingBucket(label="31-60 Days", amount=bucket_totals["31-60"]),
-        ARAgingBucket(label="61-90 Days", amount=bucket_totals["61-90"]),
-        ARAgingBucket(label="90+ Days", amount=bucket_totals["90+"]),
-    ]
+    bucket_total_list = [ARAgingBucket(label=bucket_labels[k], amount=bucket_totals[k]) for k in bucket_keys]
 
     return APAgingReport(asOf=effective_date, rows=ap_rows, bucketTotals=bucket_total_list, grandTotal=grand_total, rowCount=len(ap_rows))
