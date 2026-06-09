@@ -285,7 +285,7 @@ async def seed_loan_lifecycle_pg() -> Dict[str, Any]:
             if months_paid < term:
                 loan.next_due_date = disbursed_at + timedelta(days=30 * (months_paid + 1))
 
-        await session.commit()
+            await session.commit()
 
     logger.info(f"Loan lifecycle seeded: {counts}")
     return {"loan_lifecycle_created": sum(counts.values())}

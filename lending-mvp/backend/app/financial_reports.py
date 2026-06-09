@@ -201,6 +201,7 @@ class ARAgingCustomerRow:
     customerId: str
     customerName: str
     loanId: str
+    branchCode: str
     totalDue: Decimal
     buckets: List[ARAgingBucket]
 
@@ -395,6 +396,7 @@ async def resolve_ar_aging(
             loan_data[lid] = {
                 "loan_id": lid, "customer_id": str(r.customer_id or "0"),
                 "customer_name": r.display_name or f"Customer {r.customer_id}",
+                "branch_code": r.branch_code or "",
                 "total_due": Decimal("0.00"),
                 "buckets": {"current": Decimal("0.00"), "1-30": Decimal("0.00"), "31-60": Decimal("0.00"), "61-90": Decimal("0.00"), "90+": Decimal("0.00")},
             }
@@ -433,7 +435,8 @@ async def resolve_ar_aging(
         ]
         customer_rows.append(ARAgingCustomerRow(
             customerId=ld["customer_id"], customerName=ld["customer_name"],
-            loanId=ld["loan_id"], totalDue=ld["total_due"], buckets=buckets_list,
+            loanId=ld["loan_id"], branchCode=ld["branch_code"],
+            totalDue=ld["total_due"], buckets=buckets_list,
         ))
         grand_total += ld["total_due"]
         for k in bucket_totals:
