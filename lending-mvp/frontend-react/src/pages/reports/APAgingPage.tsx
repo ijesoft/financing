@@ -107,7 +107,7 @@ export default function APAgingPage() {
                                             {bucket.total > 0 ? fmt(bucket.total) : '\u2014'}
                                         </td>
                                     ))}
-                                    <td className="px-4 py-3 text-right font-mono font-semibold text-white">{fmt(row.totalBalance)}</td>
+                                    <td className="px-4 py-3 text-right font-mono font-semibold text-white">{fmt(Number(row.totalBalance))}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -116,10 +116,10 @@ export default function APAgingPage() {
                                 <td className="px-4 py-4 text-right text-white uppercase">Grand Total</td>
                                 {bucketLabels.map((_, i) => (
                                     <td key={i} className={`px-4 py-4 text-right font-mono ${BUCKET_COLORS[i] || 'text-white'}`}>
-                                        {fmt(data.rows.reduce((sum, r) => sum + (r.buckets[i]?.total || 0), 0))}
+                                        {fmt(data.rows.reduce((sum, r) => sum + Number(r.buckets[i]?.total || 0), 0))}
                                     </td>
                                 ))}
-                                <td className="px-4 py-4 text-right font-mono text-lg text-white">{fmt(data.grandTotal)}</td>
+                                <td className="px-4 py-4 text-right font-mono text-lg text-white">{fmt(Number(data.grandTotal))}</td>
                             </tr>
                         </tfoot>
                     </table>
