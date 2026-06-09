@@ -40,7 +40,7 @@ async def seed_admin_user():
     try:
         database_url = os.getenv(
             "DATABASE_URL",
-            "postgresql+asyncpg://lending_user:lending_secret@postgres:5432/lending_db"
+            "postgresql+asyncpg://lending_user:lending_password@localhost:5432/lending_db"
         )
         
         logger.info("🌱 Starting admin user seed...")
