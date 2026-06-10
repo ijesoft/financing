@@ -179,7 +179,8 @@ export default function LoansPage() {
                             <tr className="border-b border-slate-700/50">
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Borrower</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Product</th>
-                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Amount</th>
+                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Principal</th>
+                                <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Balance</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Status</th>
                                 <th className="text-left px-4 py-3 text-xs font-semibold text-slate-400 uppercase tracking-wider">Term</th>
                                 {canAssign && (
@@ -189,7 +190,7 @@ export default function LoansPage() {
                         </thead>
                         <tbody>
                             {filteredLoans.length === 0 ? (
-                                <tr><td colSpan={canAssign ? 7 : 5} className="text-center py-12 text-slate-400">No loans found.</td></tr>
+                                <tr><td colSpan={canAssign ? 8 : 6} className="text-center py-12 text-slate-400">No loans found.</td></tr>
                             ) : filteredLoans.map((loan: Loan) => (
                                 <tr
                                     key={loan.id}
@@ -206,6 +207,9 @@ export default function LoansPage() {
                                     </td>
                                     <td className="px-4 py-3 text-white font-medium">
                                         {loan.principal ? formatCurrency(loan.principal) : '—'}
+                                    </td>
+                                    <td className="px-4 py-3 text-white font-medium">
+                                        {loan.outstandingBalance != null ? formatCurrency(loan.outstandingBalance) : '—'}
                                     </td>
                                     <td className="px-4 py-3">
                                         <span className={`text-xs px-2 py-1 rounded-full ${getStatusColor(loan.status)}`}>

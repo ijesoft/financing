@@ -11,7 +11,7 @@ import { ResponsiveContainer, AreaChart, Area, XAxis, YAxis, CartesianGrid, Tool
 
 const DASHBOARD_QUERY = `query {
     dashboardStats {
-        customersTotal loansTotal activeLoans totalPortfolio overdueLoans totalCollections collectedThisMonth totalOutstanding
+        customersTotal loansTotal activeLoans activeSavingsAccounts totalPortfolio overdueLoans totalCollections collectedThisMonth totalOutstanding
     }
     collectionsDashboard {
         totalLoans totalOutstanding totalCollections pendingCollections overdueCollections collectedThisMonth
@@ -24,6 +24,7 @@ interface DashboardData {
         customersTotal: number
         loansTotal: number
         activeLoans: number
+        activeSavingsAccounts: number
         totalPortfolio: string
         overdueLoans: number
         totalCollections: string
@@ -96,6 +97,7 @@ export default function DashboardPage() {
 
     const totalCustomers = stats?.customersTotal ?? 0
     const activeLoans = stats?.activeLoans ?? 0
+    const activeSavingsAccounts = stats?.activeSavingsAccounts ?? 0
     const totalPortfolio = parseFloat(String(stats?.totalPortfolio || 0))
     const overdueLoans = stats?.overdueLoans ?? 0
     const totalCollections = parseFloat(String(coll?.totalCollections || stats?.totalCollections || 0))
@@ -121,7 +123,7 @@ export default function DashboardPage() {
             </div>
 
             {/* Stats Grid */}
-            <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-6 gap-4">
                 <StatCard
                     title="Total Customers"
                     value={loading ? '—' : totalCustomers.toLocaleString()}
@@ -143,6 +145,20 @@ export default function DashboardPage() {
                     subtitle={`${activeLoans} active loans`}
                     icon={CreditCard}
                     gradient="gradient-warning"
+                />
+                <StatCard
+                    title="Active Loans"
+                    value={loading ? '—' : activeLoans.toLocaleString()}
+                    subtitle="Disbursed loans"
+                    icon={CreditCard}
+                    gradient="gradient-info"
+                />
+                <StatCard
+                    title="Active Savings"
+                    value={loading ? '—' : activeSavingsAccounts.toLocaleString()}
+                    subtitle="Active savings accounts"
+                    icon={PiggyBank}
+                    gradient="gradient-primary"
                 />
                 <StatCard
                     title="Overdue Loans"

@@ -190,6 +190,11 @@ export default function Sidebar() {
                             <span className="flex-1">AR Aging</span>
                             <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
                         </NavLink>
+                                                <NavLink to="/reports/delinquency" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
+                            <AlertTriangle className="w-4 h-4" />
+                            <span className="flex-1">Delinquency</span>
+                            <ChevronRight className="w-3.5 h-3.5 opacity-0 group-hover:opacity-50 transition-opacity" />
+                        </NavLink>
                         <NavLink to="/reports/ap-aging" className={({ isActive }) => cn('sidebar-item group', isActive && 'active')}>
                             <TrendingDown className="w-4 h-4" />
                             <span className="flex-1">AP Aging</span>

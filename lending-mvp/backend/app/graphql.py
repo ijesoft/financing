@@ -68,6 +68,14 @@ from .financial_reports import (
     resolve_ar_aging,
     resolve_ap_aging,
 )
+from .delinquency_report import (
+    DelinquencyReport,
+    DelinquencySummary,
+    DelinquencyAgingBucketSummary,
+    DelinquentLoanNode,
+    DelinquentLoanConnection,
+    resolve_delinquency_report,
+)
 from .database.pg_models import (
     CustomerActivity,
     Collection,
@@ -131,6 +139,7 @@ class DashboardStats:
     customersTotal: int
     loansTotal: int
     activeLoans: int
+    activeSavingsAccounts: int
     totalPortfolio: Decimal
     overdueLoans: int
     totalCollections: Decimal
@@ -1728,6 +1737,16 @@ class Query:
         return await resolve_ap_aging(info, asOf, branchCode)
 
     @strawberry.field
+    async def delinquencyReport(
+        self,
+        info: Info,
+        asOf: Optional[date] = None,
+        branchCode: Optional[str] = None,
+    ) -> DelinquencyReport:
+        return await resolve_delinquency_report(info, asOf, branchCode)
+
+
+    @strawberry.field
     async def unresolvedAlerts(self) -> List[Health]:
         return []  # Placeholder
 
@@ -1886,6 +1905,11 @@ class Query:
                     select(func.count(LoanApplication.id)).where(LoanApplication.status == "active")
                 )
             ).scalar() or 0
+            active_savings_count = (
+                await session.execute(
+                    select(func.count(SavingsAccount.id)).where(SavingsAccount.status == "active")
+                )
+            ).scalar() or 0
             portfolio = (
                 await session.execute(
                     select(func.coalesce(func.sum(LoanApplication.approved_principal), 0))
@@ -1924,6 +1948,7 @@ class Query:
                 customersTotal=customer_count,
                 loansTotal=loan_count,
                 activeLoans=active_count,
+                activeSavingsAccounts=active_savings_count,
                 totalPortfolio=portfolio,
                 overdueLoans=overdue_count,
                 totalCollections=total_collections,
