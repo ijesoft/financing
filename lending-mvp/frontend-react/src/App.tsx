@@ -39,6 +39,7 @@ import BalanceSheetPage from '@/pages/reports/BalanceSheetPage'
 import ARAgingPage from '@/pages/reports/ARAgingPage'
 import APAgingPage from '@/pages/reports/APAgingPage'
 import DelinquencyReportPage from '@/pages/reports/DelinquencyReportPage'
+import AiAssistantPage from '@/pages/AiAssistantPage'
 
 function ProtectedLayout() {
     const { isAuthenticated } = useAuth()
@@ -87,6 +88,7 @@ function ProtectedLayout() {
                         <Route path="/reports/ar-aging" element={<ARAgingPage />} />
                         <Route path="/reports/ap-aging" element={<APAgingPage />} />
                         <Route path="/reports/delinquency" element={<DelinquencyReportPage />} />
+                        <Route path="/ai-assistant" element={<AiAssistantPage />} />
                         <Route path="/savings/:id" element={<SavingsDetailPage />} />
                         <Route path="/savings/:id/transaction" element={<SavingsTransactionPage />} />
                         <Route path="*" element={<Navigate to="/dashboard" replace />} />

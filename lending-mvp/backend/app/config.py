@@ -26,6 +26,11 @@ class Settings(BaseSettings):
     # ── File Uploads (KYC docs) ───────────────────────────────────────────────
     UPLOAD_DIR: str = "/tmp/kyc_uploads"
 
+    # ── Local AI (OpenAI-compatible LLM) ──────────────────────────────────────
+    local_ai_base_url: str = ""
+    local_ai_api_key: str = ""
+    local_ai_model: str = ""
+
     # ── Banking-grade mode ────────────────────────────────────────────────────
     banking_grade_mode: bool = False
 

@@ -16,6 +16,7 @@ from .database.pg_core_models import User, Customer
 from .auth.dependencies import get_current_user, require_admin
 from .auth.security import verify_password, create_access_token, create_refresh_token
 from .auth.rbac import get_sql_branch_filter
+from .ai_service import ask_ai
 
 logger = logging.getLogger(__name__)
 
@@ -93,3 +94,34 @@ async def health_check():
 async def root():
     """Root endpoint."""
     return {"message": "Lending MVP API — Phase 2", "version": "2.0.0"}
+
+
+# ── AI Endpoints ────────────────────────────────────────────────────────────
+class AIAskRequest(BaseModel):
+    question: str
+
+
+class AIAskResponse(BaseModel):
+    success: bool
+    answer: str
+    message: str = ""
+
+
+@router.post("/api/ai/ask", response_model=AIAskResponse)
+async def ai_ask(
+    body: AIAskRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """Ask the AI assistant a question. Requires collections_officer, loan_officer, branch_manager, or admin role."""
+    allowed_roles = ("collections_officer", "loan_officer", "branch_manager", "admin")
+    if current_user.role not in allowed_roles:
+        return AIAskResponse(success=False, answer="", message="Not authorized")
+
+    if not body.question or not body.question.strip():
+        return AIAskResponse(success=False, answer="", message="Question cannot be empty")
+
+    if len(body.question) > 2000:
+        return AIAskResponse(success=False, answer="", message="Question is too long (max 2000 characters)")
+
+    answer = await ask_ai(body.question.strip())
+    return AIAskResponse(success=True, answer=answer, message="")

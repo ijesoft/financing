@@ -30,6 +30,7 @@ import {
     Landmark,
     TrendingUp,
     TrendingDown,
+    Bot,
 } from 'lucide-react'
 
 // Role-based nav configuration
@@ -44,6 +45,7 @@ const navItems = [
     { to: '/loan-products', icon: Package, label: 'Loan Products', roles: ['admin', 'loan_officer', 'branch_manager'] },
     { to: '/collections', icon: AlertTriangle, label: 'Collections', roles: ['admin', 'loan_officer', 'branch_manager'] },
     { to: '/collection-due', icon: Calendar, label: 'Due Collections', roles: ['admin', 'loan_officer', 'branch_manager'] },
+    { to: '/ai-assistant', icon: Bot, label: 'AI Assistant', roles: ['admin', 'loan_officer', 'branch_manager', 'collections_officer'] },
     { to: '/chart-of-accounts', icon: BookOpen, label: 'Chart of Accounts', roles: ['admin', 'branch_manager'] },
     { to: '/journal-entries', icon: FileText, label: 'Journal Entries', roles: ['admin', 'branch_manager', 'auditor'] },
     { to: '/branches', icon: GitBranch, label: 'Branches', roles: ['admin', 'branch_manager'] },
