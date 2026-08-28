@@ -1,59 +1,123 @@
-from typing import List, Optional
-from bson import ObjectId
-from motor.motor_asyncio import AsyncIOMotorCollection
-from ..basemodel.transaction_model import TransactionBase, TransactionInDB
-from ..basemodel.savings_model import RegularSavings # Import RegularSavings
-from .savings_crud import SavingsCRUD, _convert_decimal_to_str
+"""
+PostgreSQL-only transaction CRUD.
+
+Replaces Mongo-based TransactionCRUD. All writes go to savings_transactions
+via AsyncSession with SELECT FOR UPDATE and Decimal amounts.
+"""
+from __future__ import annotations
+
 from decimal import Decimal
+from typing import List, Optional
+
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from .pg_core_models import SavingsAccount, SavingsTransaction
+
 
 class TransactionCRUD:
-    def __init__(self, collection: AsyncIOMotorCollection, savings_crud: SavingsCRUD):
-        self.collection = collection
+    """PG-only CRUD for savings_transactions."""
+
+    def __init__(self, db: AsyncSession, savings_crud=None):
+        # savings_crud kept for backward compatibility but unused (balance handled here)
+        self.db = db
         self.savings_crud = savings_crud
 
-    async def create_transaction(self, transaction: TransactionBase) -> Optional[TransactionInDB]:
-        # In a real-world scenario, you'd use a database transaction to ensure atomicity.
-        # MongoDB supports multi-document transactions. For this example, we'll do a two-step process.
+    async def create_transaction(
+        self,
+        account_id: int,
+        transaction_type: str,
+        amount: Decimal,
+        reference: Optional[str] = None,
+        description: Optional[str] = None,
+    ) -> Optional[SavingsTransaction]:
+        """
+        Atomic: SELECT FOR UPDATE account, validate, update balance, insert transaction.
 
-        # 1. Update the balance in the savings account
-        amount_to_update = transaction.amount
-        if transaction.transaction_type == "withdrawal":
-            # Ensure the account has sufficient funds before updating
-            account = await self.savings_crud.get_savings_account_by_id(str(transaction.account_id))
-            if not account:
-                return None # Account not found
+        transaction_type: 'deposit' | 'withdrawal' | 'transfer_in' | 'transfer_out' | 'interest_posting'
+        amount must be Decimal > 0.
+        """
+        if not isinstance(amount, Decimal):
+            amount = Decimal(str(amount))
+        if amount <= Decimal("0.00"):
+            return None
+        try:
+            aid = int(str(account_id))
+        except ValueError:
+            return None
 
-            # Check for general insufficient funds first using Decimal
-            if account.balance < transaction.amount:
-                return None # Insufficient funds
+        # Lock account row
+        result = await self.db.execute(
+            select(SavingsAccount).where(SavingsAccount.id == aid).with_for_update()
+        )
+        account = result.scalar_one_or_none()
+        if not account:
+            return None
 
-            # Specific check for regular savings minimum balance using Decimal
-            if account.type == "regular":
-                # RegularSavings already uses Decimal for min_balance in savings_model.py
-                regular_account_model = RegularSavings(**account.model_dump())
-                prospective_balance = account.balance - transaction.amount
-                if prospective_balance < regular_account_model.min_balance:
-                    return None # Withdrawal would violate minimum balance for regular account
-            
-            amount_to_update = -transaction.amount
+        current = account.balance or Decimal("0.00")
+        if not isinstance(current, Decimal):
+            current = Decimal(str(current))
 
-        balance_updated = await self.savings_crud.update_balance(str(transaction.account_id), amount_to_update)
+        # Validate withdrawal
+        if transaction_type in ("withdrawal", "transfer_out"):
+            if current < amount:
+                return None
+            # Regular savings minimum balance PHP 500
+            if account.account_type == "regular" and (current - amount) < Decimal("500.00"):
+                return None
+            new_balance = current - amount
+        else:
+            # deposit / transfer_in / interest
+            new_balance = current + amount
 
-        if not balance_updated:
-            return None # Failed to update balance
+        balance_before = current
+        balance_after = new_balance
 
-        # 2. Create the transaction record
-        transaction_in_db = TransactionInDB(**transaction.model_dump())
-        
-        doc = transaction_in_db.model_dump(by_alias=True, exclude={"id"})
-        processed_doc = _convert_decimal_to_str(doc)
-        result = await self.collection.insert_one(processed_doc)
-        
-        transaction_in_db.id = result.inserted_id
-        return transaction_in_db
+        # Update account
+        account.balance = new_balance
+        await self.db.flush()
 
-    async def get_transactions_by_account_id(self, account_id: str) -> List[TransactionInDB]:
-        if not ObjectId.is_valid(account_id):
+        # Insert transaction
+        txn = SavingsTransaction(
+            account_id=aid,
+            transaction_type=transaction_type,
+            amount=amount,
+            balance_before=balance_before,
+            balance_after=balance_after,
+            reference=reference,
+            description=description,
+        )
+        self.db.add(txn)
+        await self.db.flush()
+        await self.db.refresh(txn)
+        return txn
+
+    # Backward-compatible wrapper for basemodel TransactionBase callers
+    async def create_transaction_legacy(self, transaction) -> Optional[SavingsTransaction]:
+        """Accepts old TransactionBase (Mongo) shape and delegates to PG method."""
+        try:
+            ttype = getattr(transaction, "transaction_type", None) or getattr(transaction, "type", "deposit")
+            amt = getattr(transaction, "amount", Decimal("0.00"))
+            aid = getattr(transaction, "account_id", None)
+            notes = getattr(transaction, "notes", None)
+            return await self.create_transaction(
+                account_id=aid,
+                transaction_type=ttype,
+                amount=Decimal(str(amt)),
+                description=notes,
+            )
+        except Exception:
+            return None
+
+    async def get_transactions_by_account_id(self, account_id: str | int) -> List[SavingsTransaction]:
+        try:
+            aid = int(str(account_id))
+        except ValueError:
             return []
-        transactions_data = await self.collection.find({"account_id": ObjectId(account_id)}).sort("timestamp", -1).to_list(length=100)
-        return [TransactionInDB(**t) for t in transactions_data]
+        result = await self.db.execute(
+            select(SavingsTransaction)
+            .where(SavingsTransaction.account_id == aid)
+            .order_by(SavingsTransaction.created_at.desc())
+            .limit(100)
+        )
+        return list(result.scalars().all())

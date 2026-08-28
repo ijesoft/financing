@@ -50,11 +50,53 @@ class SavingsCRUD:
         )
         return list(result.scalars().all())
 
-    async def update_balance(self, account_id: int, amount: Decimal) -> bool:
-        """Apply a signed delta to the balance. Returns True on success."""
-        result = await self.db.execute(
-            select(SavingsAccount).where(SavingsAccount.id == account_id)
-        )
+    async def get_all_savings_accounts(
+        self,
+        search_term: Optional[str] = None,
+        customer_id: Optional[str] = None,
+        branch: Optional[str] = None,
+        status: Optional[str] = None,
+        account_type: Optional[str] = None,
+    ) -> List[SavingsAccount]:
+        """PG-only: fetch all savings accounts with optional filters (replaces Mongo dual-store)."""
+        from sqlalchemy import and_
+        from .pg_core_models import Customer
+        from .pg_models import Branch  # noqa: F401 — ensures branch table exists for joins if needed
+
+        stmt = select(SavingsAccount)
+        # Join customer for branch filter if needed
+        if branch:
+            stmt = stmt.join(Customer, Customer.id == SavingsAccount.customer_id).where(Customer.branch_code == branch)
+        if customer_id is not None:
+            try:
+                cid = int(str(customer_id))
+                stmt = stmt.where(SavingsAccount.customer_id == cid)
+            except ValueError:
+                # invalid customer_id → empty
+                return []
+        if search_term:
+            stmt = stmt.where(SavingsAccount.account_number.ilike(f"%{search_term}%"))
+        if status:
+            stmt = stmt.where(SavingsAccount.status == status)
+        if account_type:
+            stmt = stmt.where(SavingsAccount.account_type == account_type)
+        result = await self.db.execute(stmt)
+        return list(result.scalars().all())
+
+    async def update_balance(self, account_id: int, amount: Decimal, for_update: bool = True) -> bool:
+        """Apply a signed delta to the balance. Returns True on success.
+
+        Banking-grade: uses SELECT FOR UPDATE to prevent race conditions on concurrent deposits/withdrawals.
+        """
+        # Coerce account_id to int if passed as string (legacy callers)
+        try:
+            aid = int(str(account_id))
+        except ValueError:
+            return False
+        stmt = select(SavingsAccount).where(SavingsAccount.id == aid)
+        if for_update:
+            stmt = stmt.with_for_update()
+        result = await self.db.execute(stmt)
         account = result.scalar_one_or_none()
         if not account:
             return False
@@ -62,6 +104,10 @@ class SavingsCRUD:
         if not isinstance(current, Decimal):
             current = Decimal(str(current))
         delta = amount if isinstance(amount, Decimal) else Decimal(str(amount))
-        account.balance = current + delta
+        new_balance = current + delta
+        # Enforce non-negative balance at app layer (DB CHECK also enforces)
+        if new_balance < Decimal("0.00"):
+            return False
+        account.balance = new_balance
         await self.db.flush()
         return True

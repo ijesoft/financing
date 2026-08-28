@@ -15,7 +15,7 @@ from sqlalchemy import cast, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from strawberry.types import Info
 
-from .auth.rbac import get_sql_branch_filter
+from .auth.rbac import get_sql_branch_filter, require_any_staff, CROSS_BRANCH_ROLES
 from .database import get_async_session_local
 from .database.pg_accounting_models import GLAccount, JournalEntry, JournalLine
 from .database.pg_core_models import Customer
@@ -253,9 +253,10 @@ async def resolve_trial_balance(
     info: Info,
     asOf: Optional[date] = None,
 ) -> TrialBalanceReport:
+    # Banking-grade: financial reports require staff authentication and branch scoping
+    user = require_any_staff(info)
     effective_date = asOf or date.today()
-    user = info.context.get("current_user")
-    branch_code = get_sql_branch_filter(user) if user else None
+    branch_code = get_sql_branch_filter(user)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -285,8 +286,8 @@ async def resolve_income_statement(
     year: int,
     month: int,
 ) -> IncomeStatementReport:
-    user = info.context.get("current_user")
-    branch_code = get_sql_branch_filter(user) if user else None
+    user = require_any_staff(info)
+    branch_code = get_sql_branch_filter(user)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -318,9 +319,9 @@ async def resolve_balance_sheet(
     info: Info,
     asOf: Optional[date] = None,
 ) -> BalanceSheetReport:
+    user = require_any_staff(info)
     effective_date = asOf or date.today()
-    user = info.context.get("current_user")
-    branch_code = get_sql_branch_filter(user) if user else None
+    branch_code = get_sql_branch_filter(user)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -371,9 +372,13 @@ async def resolve_ar_aging(
     asOf: Optional[date] = None,
     branchCode: Optional[str] = None,
 ) -> ARAgingReport:
+    user = require_any_staff(info)
     effective_date = asOf or date.today()
-    user = info.context.get("current_user")
-    effective_branch = branchCode or (get_sql_branch_filter(user) if user else None)
+    # Only cross-branch roles may override branchCode; branch-scoped users are restricted to own branch
+    if branchCode and user.role not in CROSS_BRANCH_ROLES and branchCode != get_sql_branch_filter(user):
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view other branch's AR aging")
+    effective_branch = branchCode or get_sql_branch_filter(user)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:
@@ -471,9 +476,12 @@ async def resolve_ap_aging(
     asOf: Optional[date] = None,
     branchCode: Optional[str] = None,
 ) -> APAgingReport:
+    user = require_any_staff(info)
     effective_date = asOf or date.today()
-    user = info.context.get("current_user")
-    effective_branch = branchCode or (get_sql_branch_filter(user) if user else None)
+    if branchCode and user.role not in CROSS_BRANCH_ROLES and branchCode != get_sql_branch_filter(user):
+        from fastapi import HTTPException, status
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized to view other branch's AP aging")
+    effective_branch = branchCode or get_sql_branch_filter(user)
 
     session_factory = get_async_session_local()
     async with session_factory() as session:

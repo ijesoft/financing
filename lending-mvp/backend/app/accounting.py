@@ -84,9 +84,19 @@ def _to_minor(value: Any, field: str) -> int:
     if isinstance(value, Decimal):
         return int((value * 100).to_integral_value())
     if isinstance(value, float):
-        raise TypeError(
-            f"{field} must be int minor units or Decimal; float forbidden (got {value})"
-        )
+        # Banking-grade: float is forbidden when flag is on; otherwise warn + convert via string to avoid binary error
+        try:
+            from .config import settings as _s
+            _strict = bool(getattr(_s, "banking_grade_mode", False))
+        except Exception:
+            _strict = False
+        if _strict:
+            raise TypeError(
+                f"{field} must be int minor units or Decimal; float forbidden (got {value})"
+            )
+        import logging
+        logging.getLogger(__name__).warning("Float amount %s passed to %s — converting via Decimal(str()); please pass Decimal/minor", value, field)
+        return int((Decimal(str(value)) * 100).to_integral_value())
     if isinstance(value, str):
         return _to_minor(Decimal(value), field)
     raise TypeError(f"{field} unsupported type {type(value).__name__}")

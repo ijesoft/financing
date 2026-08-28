@@ -46,5 +46,15 @@ def cors_origins() -> List[str]:
 
 
 # Restricted methods + headers for the banking-grade surface.
-CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "OPTIONS"]
-CORS_ALLOW_HEADERS: List[str] = ["Authorization", "Content-Type"]
+CORS_ALLOW_METHODS: List[str] = ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"]
+CORS_ALLOW_HEADERS: List[str] = [
+    "Authorization",
+    "Content-Type",
+    "Accept",
+    "Origin",
+    "X-Requested-With",
+    "X-Branch-Code",
+    "Cookie",
+    "Idempotency-Key",
+    "X-Idempotency-Key",
+]

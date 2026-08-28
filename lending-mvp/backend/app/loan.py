@@ -770,7 +770,7 @@ class LoanMutation:
                         origination_fee_minor=fee_minor,
                         customer_id=str(loan.customer_id) if loan.customer_id is not None else None,
                         branch_code=loan.branch_code,
-                        idempotency_key=f"DISB-{txn.receipt_number}",
+                        idempotency_key=info.context.get("idempotency_key") or f"DISB-{txn.receipt_number}",
                         created_by=str(current_user.id),
                         description=f"Bank-grade disbursement posting for loan {loan.id}",
                     )
@@ -1145,7 +1145,7 @@ class LoanMutation:
                         overpayment_minor=overpay_minor,
                         customer_id=str(loan.customer_id) if loan.customer_id is not None else None,
                         branch_code=loan.branch_code,
-                        idempotency_key=f"REPAY-{txn.receipt_number}",
+                        idempotency_key=info.context.get("idempotency_key") or f"REPAY-{txn.receipt_number}",
                         created_by=str(current_user.id),
                     )
             except Exception as bg_err:

@@ -20,9 +20,12 @@ class UserCRUD:
 
     async def create_user(self, user: Any) -> Any: ...
     async def get_user_by_id(self, user_id: str) -> Optional[Any]:
-        result = await self.db.execute(
-            select(User).where(User.id == user_id)
-        )
+        from sqlalchemy import or_
+        if str(user_id).isdigit():
+            stmt = select(User).where(or_(User.id == int(user_id), User.uuid == str(user_id)))
+        else:
+            stmt = select(User).where(User.uuid == str(user_id))
+        result = await self.db.execute(stmt)
         return result.scalar_one_or_none()
 
     async def get_user_by_email(self, email: str) -> Optional[Any]:
@@ -69,9 +72,47 @@ class LoginRequest(BaseModel):
     username: str
     password: str
 
+_LOGIN_MAX_FAILS = 5
+_LOGIN_WINDOW_SEC = 900  # 15 min
+
+async def _check_login_rate_limit(identifier: str):
+    """Return True if allowed, False if blocked (5 fails / 15 min). Uses Redis, falls back to allow if Redis unavailable."""
+    try:
+        from .database.redis_client import get_redis
+        r = await get_redis()
+        key = f"login:fail:{identifier}"
+        cnt = await r.get(key)
+        if cnt and int(cnt) >= _LOGIN_MAX_FAILS:
+            return False
+        return True
+    except Exception:
+        return True
+
+async def _record_login_failure(identifier: str):
+    try:
+        from .database.redis_client import get_redis
+        r = await get_redis()
+        key = f"login:fail:{identifier}"
+        cnt = await r.incr(key)
+        if cnt == 1:
+            await r.expire(key, _LOGIN_WINDOW_SEC)
+    except Exception:
+        pass
+
+async def _clear_login_failures(identifier: str):
+    try:
+        from .database.redis_client import get_redis
+        r = await get_redis()
+        await r.delete(f"login:fail:{identifier}")
+    except Exception:
+        pass
+
 @router.post("/api-login/")
-async def api_login(login_request: LoginRequest):
+async def api_login(login_request: LoginRequest, request: Request):
     """Login endpoint that uses PostgreSQL directly without MongoDB dependencies."""
+    # Rate-limit by username (banking-grade brute-force protection)
+    if not await _check_login_rate_limit(login_request.username):
+        raise HTTPException(status_code=status.HTTP_429_TOO_MANY_REQUESTS, detail="Too many failed login attempts. Try again in 15 minutes.")
     try:
         session_factory = get_async_session_local()
         async with session_factory() as session:
@@ -82,16 +123,26 @@ async def api_login(login_request: LoginRequest):
                 user_db = await user_crud.get_user_by_email(login_request.username)
             
             if not user_db or not verify_password(login_request.password, user_db.hashed_password):
+                await _record_login_failure(login_request.username)
                 raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED,
                                     detail="Incorrect username or password")
             
             if not user_db.is_active:
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Inactive user")
             
+            # Success — clear rate-limit counter
+            await _clear_login_failures(login_request.username)
+            
             user_id = str(user_db.uuid if user_db.uuid is not None else user_db.id)
             
-            access_token = create_access_token({"sub": user_id})
-            refresh_token, jti = create_refresh_token({"sub": user_id})
+            token_payload = {
+                "sub": user_id,
+                "username": user_db.username,
+                "role": user_db.role,
+                "branch_code": getattr(user_db, "branch_code", None),
+            }
+            access_token = create_access_token(token_payload)
+            refresh_token, jti = create_refresh_token(token_payload)
             
             return {
                 "accessToken": access_token,
@@ -103,7 +154,8 @@ async def api_login(login_request: LoginRequest):
                     "email": user_db.email,
                     "fullName": user_db.full_name,
                     "isActive": user_db.is_active,
-                    "role": user_db.role
+                    "role": user_db.role,
+                    "branchCode": getattr(user_db, "branch_code", None),
                 }
             }
     except HTTPException:

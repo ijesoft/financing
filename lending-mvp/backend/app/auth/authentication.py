@@ -36,10 +36,16 @@ def get_current_user(request: Request) -> dict:
         - branch_code: Optional[str]
     """
     token = request.cookies.get("access_token")
-    if token is None:
+    if not token:
+        auth_header = request.headers.get("Authorization")
+        if auth_header and auth_header.lower().startswith("bearer "):
+            token = auth_header.split(" ", 1)[1].strip()
+
+    if not token:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail="Not authenticated",
+            headers={"WWW-Authenticate": "Bearer"},
         )
 
     # Accept either "Bearer <token>" or raw token

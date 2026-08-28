@@ -93,10 +93,19 @@ async def get_context(request: Request = None):
     """
     GraphQL context provider.
     Extracts current user from JWT token in Authorization header.
+    Also extracts Idempotency-Key for banking-grade replay protection on money-moving mutations.
     """
-    context = {"current_user": None}
+    context = {"current_user": None, "idempotency_key": None, "request": request}
     if not request:
         return context
+
+    # Idempotency-Key header (banking-grade replay protection)
+    idem = request.headers.get("Idempotency-Key") or request.headers.get("idempotency-key") or request.headers.get("X-Idempotency-Key") or request.headers.get("x-idempotency-key")
+    if idem:
+        # Trim and validate basic UUID/text format (1-64 chars, alnum + -/_)
+        idem = idem.strip()
+        if 1 <= len(idem) <= 64:
+            context["idempotency_key"] = idem
 
     auth_header = request.headers.get("Authorization")
     if auth_header and auth_header.startswith("Bearer "):
@@ -465,13 +474,6 @@ class LoanConnection:
 
 
 @strawberry.type
-@strawberry.type
-class LoanConnection:
-    loans: List[LoanNode]
-    total: int
-
-
-@strawberry.type
 class LoanTransactionNode:
     id: str
     loanId: str
@@ -776,7 +778,6 @@ class FinancialStatementNode:
     createdAt: datetime = strawberry.field(default_factory=datetime.now)
 
 
-@strawberry.type
 @strawberry.type
 class BranchNode:
     id: int
