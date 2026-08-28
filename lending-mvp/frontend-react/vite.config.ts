@@ -2,7 +2,8 @@ import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 import path from 'path'
 
-// https://vitejs.dev/config/
+const backendTarget = process.env.VITE_BACKEND_TARGET || (process.env.NODE_ENV === 'production' ? 'http://backend:8000' : 'http://localhost:8002')
+
 export default defineConfig({
     plugins: [react()],
     resolve: {
@@ -19,17 +20,17 @@ export default defineConfig({
         port: 3000,
         proxy: {
             '/graphql': {
-                target: 'http://localhost:8002',
+                target: backendTarget,
                 changeOrigin: true,
                 secure: false,
             },
             '/api-login/': {
-                target: 'http://localhost:8002',
+                target: backendTarget,
                 changeOrigin: true,
                 secure: false,
             },
             '/api': {
-                target: 'http://localhost:8002',
+                target: backendTarget,
                 changeOrigin: true,
                 secure: false,
             },

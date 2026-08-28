@@ -100,4 +100,5 @@ services:
       - backend
     environment:
       VITE_GRAPHQL_URL: /graphql
-      VITE_API_URL: http://lending_backend:8000
+      VITE_API_URL: ""
+      VITE_BACKEND_TARGET: http://backend:8000

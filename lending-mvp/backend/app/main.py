@@ -21,6 +21,7 @@ except ImportError:
 # Import all routers to register routes
 from . import login_endpoint
 from . import rest_api  # REST API endpoints for frontend
+from . import chat_routes  # AI chat assistant endpoints
 # from . import teller  # Disabled: MongoDB not configured  # Teller endpoints
 from . import graphql as graphql_module  # Real Strawberry GraphQL endpoint
 
@@ -83,6 +84,10 @@ async def lifespan(app: FastAPI):
         logger.warning("Redis connection failed (non-fatal): %s", exc)
     yield
     # Shutdown
+    try:
+        await chat_routes.shutdown_chat_service()
+    except Exception:
+        pass
     await close_redis()
     await engine.dispose()
     logger.info("Shutdown complete.")
@@ -97,6 +102,7 @@ app.include_router(login_endpoint.router, prefix="")
 
 # Include REST API endpoints
 app.include_router(rest_api.router, prefix="")
+app.include_router(chat_routes.router, prefix="")
 # app.include_router(teller.router, prefix="")  # Disabled
 
 # Mount the real Strawberry GraphQL router

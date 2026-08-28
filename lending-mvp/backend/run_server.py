@@ -8,12 +8,12 @@ import sys
 import os
 
 # Add project root to path
-sys.path.insert(0, '/home/ubuntu/Github/financing/lending-mvp/backend')
-os.chdir('/home/ubuntu/Github/financing/lending-mvp/backend')
+backend_dir = os.path.dirname(os.path.abspath(__file__))
+sys.path.insert(0, backend_dir)
+os.chdir(backend_dir)
 
 print("Starting Lending MVP Backend Server...")
-print("Project root: /home/ubuntu/Github/financing/lending-mvp")
-print("Backend root: /home/ubuntu/Github/financing/lending-mvp/backend")
+print(f"Backend root: {backend_dir}")
 
 # Check if requirements are installed
 try:
@@ -46,16 +46,12 @@ schema = getattr(graphql_module, 'schema', None)
 
 if not schema:
     # Try to find the schema in Query class
-    from app.graphql import Query
-    # Create a minimal schema for now
     import strawberry
     @strawberry.type
-class DummySchema:
-    health: str = "ok"
-    
-schema = DummySchema()
-    
-print("Using dummy schema (full schema import failed)")
+    class DummyQuery:
+        health: str = "ok"
+    schema = strawberry.Schema(query=DummyQuery)
+    print("Using dummy schema (full schema import failed)")
 
 # Create FastAPI app
 app = FastAPI(
